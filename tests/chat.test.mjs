@@ -186,3 +186,21 @@ test('out of credit gets a clear message', async () => {
   globalThis.fetch = realFetch;
   assert.match(j.reply, /out of API credit/);
 });
+
+test('reply that claims "logged" without a tool call gets corrected', async () => {
+  queue.push(
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged 3 pieces of grilled chicken.' }] },
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'k', name: 'log_meal', input: { description: '3 pieces grilled chicken', processing: 'whole', items: [{ name: 'grilled chicken', qty: '3 pieces', calories: 140, protein_g: 26, fiber_g: 0 }] } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged 3 pieces of grilled chicken, ~140 cal.' }] },
+  );
+  const r = await handler(req('good', { text: '3 pieces of grilled chicken', tz: 'America/New_York' }));
+  const j = await r.json();
+  assert.equal(j.entries.length, 1);
+  assert.equal(j.entries[0].calories, 140);
+  assert.match(calls.at(-2).messages.at(-1).content, /App check/);
+  // history now carries saved notes
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
+  await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
+  const hist = JSON.stringify(calls.at(-1).messages);
+  assert.ok(hist.includes('[app: saved 1'), hist.slice(-600));
+});

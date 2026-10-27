@@ -96,6 +96,19 @@ async function callClaude({ model, system, messages }) {
 }
 
 // Turn saved chat history into alternating user/assistant turns.
+// What a past reply actually saved, so the model sees the link between "logged" and a save.
+export function savedNote(entries = []) {
+  const live = (entries || []).filter(e => !e.deleted && e.kind !== 'profile');
+  if (!live.length) return '[app: nothing was saved this turn]';
+  const desc = live.slice(0, 6).map(e => e.kind === 'meal' ? `meal "${e.description}"` : e.kind === 'workout' ? `workout ${e.type}` : e.kind === 'hunger' ? `hunger ${e.level}/5` : e.kind).join('; ');
+  return `[app: saved ${live.length} — ${desc}${live.length > 6 ? '; …' : ''}]`;
+}
+
+// Does a reply claim something was logged?
+export function claimsLogged(text) {
+  return /\b(logged|i(?:'ve| have) added|added (?:it|that|them|your)|saved|recorded)\b/i.test(text || '');
+}
+
 function historyToMessages(history) {
   const out = [];
   for (const h of history) {
@@ -106,6 +119,7 @@ function historyToMessages(history) {
     if (role === 'user' && text.length > LONG_PASTE) {
       text = `${text.slice(0, 200)}… [long pasted log from earlier, ${text.length} chars — already handled; do not log it again unless the user pastes it again]`;
     }
+    if (role === 'assistant') text += `\n${savedNote(h.entries)}`;
     const last = out.at(-1);
     if (last && last.role === role) last.content += `\n\n${text}`;
     else out.push({ role, content: text });
@@ -204,6 +218,7 @@ export default async (req) => {
   let replyText = '';
   let stopReason = null, partial = false, failed = false, errorDetail = null;
   let activeModel = model;
+  let nudged = false;
 
   try {
     const started = Date.now();
@@ -226,7 +241,18 @@ export default async (req) => {
       if (textParts.length) replyText = textParts.join('\n');
 
       let toolUses = resp.content.filter(c => c.type === 'tool_use');
-      if (!toolUses.length) break;
+      if (!toolUses.length) {
+        const saved = entries.some(e => e.kind !== 'profile');
+        if (!saved && !nudged && claimsLogged(replyText)) {
+          nudged = true;
+          console.warn('Reply claimed a log with no tool call; nudging', { model: activeModel });
+          messages.push({ role: 'assistant', content: resp.content });
+          messages.push({ role: 'user', content: 'App check: your reply says something was logged, but you called no log tool this turn, so nothing was saved. Call the log tools now for everything the user mentioned in their last message, then reply again (briefly).' });
+          replyText = '';
+          continue;
+        }
+        break;
+      }
       if (resp.stop_reason !== 'tool_use' && resp.stop_reason !== 'max_tokens') break;
 
       // If the reply was cut off, the last tool call may be incomplete: skip it and ask
