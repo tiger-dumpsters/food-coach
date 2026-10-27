@@ -147,7 +147,6 @@ export const TOOLS = [
         workout_types: { type: 'array', items: { type: 'string', enum: WORKOUT_TYPES } },
         workouts_per_week: { type: 'number' },
         preferred_days: { type: 'array', items: { type: 'string' } },
-        weighin_rhythm: { type: 'string', enum: ['daily', 'few_per_week', 'weekly', 'never'] },
         reminder_level: { type: 'string', enum: ['quiet', 'normal', 'accountability'] },
         onboarded: { type: 'boolean' },
       },
