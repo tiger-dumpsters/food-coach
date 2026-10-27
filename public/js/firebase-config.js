@@ -1,11 +1,10 @@
 // Firebase web config. These values are public identifiers (they ship in every
 // Firebase web app); security comes from Firestore rules + server-side token checks.
-// Paste the firebaseConfig block from Firebase console → Project settings → Your apps.
 export const firebaseConfig = {
-  apiKey: 'REPLACE_ME',
-  authDomain: 'REPLACE_ME.firebaseapp.com',
-  projectId: 'REPLACE_ME',
-  storageBucket: 'REPLACE_ME.appspot.com',
-  messagingSenderId: 'REPLACE_ME',
-  appId: 'REPLACE_ME',
+  apiKey: 'AIzaSyCWePmqjWQfbo5lb9UZd4qNJIVWv6sCCm4',
+  authDomain: 'food-app-55f7d.firebaseapp.com',
+  projectId: 'food-app-55f7d',
+  storageBucket: 'food-app-55f7d.firebasestorage.app',
+  messagingSenderId: '868115075352',
+  appId: '1:868115075352:web:55f62ded7a9e1bfad00e6d',
 };
