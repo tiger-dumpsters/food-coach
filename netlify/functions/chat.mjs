@@ -86,7 +86,7 @@ async function callClaude({ model, system, messages }) {
       'x-api-key': process.env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, temperature: 0, system, tools: TOOLS, messages }),
+    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, tools: TOOLS, messages }),
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -202,12 +202,23 @@ export default async (req) => {
   const entries = [];
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let replyText = '';
-  let stopReason = null, partial = false, failed = false;
+  let stopReason = null, partial = false, failed = false, errorDetail = null;
+  let activeModel = model;
 
   try {
     const started = Date.now();
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const resp = await callClaude({ model, system, messages });
+      let resp;
+      try {
+        resp = await callClaude({ model: activeModel, system, messages });
+      } catch (err) {
+        // One fallback: if the stronger model rejects the request, try the fast one.
+        if (activeModel === MODEL_FAST || /credit balance/i.test(err.message)) throw err;
+        console.error('Smart model failed, falling back', err.message);
+        errorDetail = err.message;
+        activeModel = MODEL_FAST;
+        resp = await callClaude({ model: activeModel, system, messages });
+      }
       for (const k of Object.keys(usage)) usage[k] += resp.usage?.[k] || 0;
       stopReason = resp.stop_reason;
 
@@ -251,10 +262,14 @@ export default async (req) => {
     }
   } catch (err) {
     console.error(err);
+    errorDetail = err.message;
     failed = !entries.length;
+    const outOfCredit = /credit balance/i.test(err.message);
     replyText = replyText || (entries.length
       ? ''
-      : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
+      : outOfCredit
+        ? "I'm out of API credit, so I couldn't log that. (Admin: top up at console.anthropic.com → Billing.)"
+        : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
   }
 
   if (partial) {
@@ -270,12 +285,12 @@ export default async (req) => {
 
   await Promise.all([
     userRef.collection('messages').add({
-      role: 'assistant', text: replyText, entries, model, failed,
+      role: 'assistant', text: replyText, entries, model: activeModel, failed, ...(errorDetail ? { error: errorDetail.slice(0, 500) } : {}),
       createdAt: FieldValue.serverTimestamp(), day: clock.day,
     }),
     userRef.set({
       usage: {
-        [model.replace(/\./g, '_')]: {
+        [activeModel.replace(/\./g, '_')]: {
           input_tokens: FieldValue.increment(usage.input_tokens),
           output_tokens: FieldValue.increment(usage.output_tokens),
           cache_read_input_tokens: FieldValue.increment(usage.cache_read_input_tokens),
@@ -285,7 +300,7 @@ export default async (req) => {
     }, { merge: true }),
   ]);
 
-  return json(200, { reply: replyText, entries, model });
+  return json(200, { reply: replyText, entries, model: activeModel });
 };
 
 // The user's own foods with the numbers already used for them (most recent wins),

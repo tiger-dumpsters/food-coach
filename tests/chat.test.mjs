@@ -158,5 +158,31 @@ test('meal totals come from items, and known foods are reused in context', async
   const sys = calls.at(-1).system[1].text;
   assert.ok(sys.includes('Known foods'));
   assert.ok(sys.includes('- Homemade GF bread | 2 slices | 220 cal'), sys);
-  assert.equal(calls.at(-1).temperature, 0);
+  assert.equal(calls.at(-1).temperature, undefined); // newer models reject sampling params
+});
+
+test('smart model rejection falls back to fast model; error saved', async () => {
+  const realFetch = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body); calls.push(body); n++;
+    if (body.model === 'claude-sonnet-5-5') return { ok: false, status: 400, text: async () => '{"error":{"message":"temperature is not supported"}}' };
+    return { ok: true, json: async () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Nice, that lunch held you.' }], usage: {} }) };
+  };
+  const r = await handler(req('good', { text: 'still not hungry which is remarkable', tz: 'America/New_York' }));
+  const j = await r.json();
+  globalThis.fetch = realFetch;
+  assert.equal(j.reply, 'Nice, that lunch held you.');
+  assert.equal(j.model, 'claude-haiku-5-5');
+  const saved = [...store.entries()].filter(([k, v]) => k.includes('/messages/') && v.error);
+  assert.ok(saved.length >= 1);
+});
+
+test('out of credit gets a clear message', async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => 'Your credit balance is too low to access the Anthropic API.' });
+  const r = await handler(req('good', { text: 'why am I hungry?', tz: 'America/New_York' }));
+  const j = await r.json();
+  globalThis.fetch = realFetch;
+  assert.match(j.reply, /out of API credit/);
 });
