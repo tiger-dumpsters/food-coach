@@ -13,7 +13,10 @@ import { buildSystem, totals } from './lib/prompt.mjs';
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const MODEL_SMART = process.env.MODEL_SMART || 'claude-sonnet-5-5';
-const MAX_ROUNDS = 4;
+const MAX_ROUNDS = 8;
+const MAX_TOKENS = 8000;
+const TIME_BUDGET_MS = 50_000; // stay under Netlify's function limit
+const LONG_PASTE = 1500;       // chars; treated as a bulk import
 
 function admin() {
   if (!getApps().length) {
@@ -67,10 +70,11 @@ function rows(snap, tz) {
 // Questions and planning go to the stronger model; plain logging to the fast one.
 export function pickModel(text, onboarded) {
   if (!onboarded) return MODEL_SMART;
+  // A long pasted log is mostly transcription; the fast model handles it quicker.
+  if (text.length > LONG_PASTE) return MODEL_FAST;
   const t = text.toLowerCase();
   if (t.includes('?')) return MODEL_SMART;
   if (/\b(what|why|how|should|could|would|can i|recommend|suggest|plan|idea|ideas|help|hungry|starving|snacky|craving|week|month|trend|progress|stuck)\b/.test(t)) return MODEL_SMART;
-  if (text.length > 280) return MODEL_SMART;
   return MODEL_FAST;
 }
 
@@ -82,7 +86,7 @@ async function callClaude({ model, system, messages }) {
       'x-api-key': process.env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({ model, max_tokens: 900, system, tools: TOOLS, messages }),
+    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, tools: TOOLS, messages }),
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -96,8 +100,12 @@ function historyToMessages(history) {
   const out = [];
   for (const h of history) {
     const role = h.role === 'assistant' ? 'assistant' : 'user';
-    const text = (h.text || '').trim();
-    if (!text) continue;
+    let text = (h.text || '').trim();
+    if (!text || h.failed || text === '…') continue;
+    // Earlier long pastes were already handled (or failed); don't let the model redo them.
+    if (role === 'user' && text.length > LONG_PASTE) {
+      text = `${text.slice(0, 200)}… [long pasted log from earlier, ${text.length} chars — already handled; do not log it again unless the user pastes it again]`;
+    }
     const last = out.at(-1);
     if (last && last.role === role) last.content += `\n\n${text}`;
     else out.push({ role, content: text });
@@ -193,43 +201,75 @@ export default async (req) => {
   const entries = [];
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let replyText = '';
+  let stopReason = null, partial = false, failed = false;
 
   try {
+    const started = Date.now();
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const resp = await callClaude({ model, system, messages });
       for (const k of Object.keys(usage)) usage[k] += resp.usage?.[k] || 0;
+      stopReason = resp.stop_reason;
 
-      const textParts = resp.content.filter(c => c.type === 'text').map(c => c.text);
-      if (textParts.length) replyText = textParts.join('\n').trim();
+      const textParts = resp.content.filter(c => c.type === 'text').map(c => c.text.trim()).filter(Boolean);
+      if (textParts.length) replyText = textParts.join('\n');
 
-      const toolUses = resp.content.filter(c => c.type === 'tool_use');
-      if (resp.stop_reason !== 'tool_use' || !toolUses.length) break;
+      let toolUses = resp.content.filter(c => c.type === 'tool_use');
+      if (!toolUses.length) break;
+      if (resp.stop_reason !== 'tool_use' && resp.stop_reason !== 'max_tokens') break;
 
-      messages.push({ role: 'assistant', content: resp.content });
-      const results = [];
-      for (const tu of toolUses) {
+      // If the reply was cut off, the last tool call may be incomplete: skip it and ask
+      // the model to carry on from there.
+      const cutOff = resp.stop_reason === 'max_tokens';
+      const skipped = cutOff ? toolUses.at(-1) : null;
+      const content = resp.content.filter(c => !(skipped && c === skipped));
+      toolUses = toolUses.filter(t => t !== skipped);
+      if (!toolUses.length) break;
+
+      messages.push({ role: 'assistant', content });
+      // Write all of this round's entries in parallel (a pasted log can be dozens).
+      const results = await Promise.all(toolUses.map(async (tu) => {
         try {
           const { result, entry } = await runTool(tu.name, tu.input || {}, {
             userRef, clock, FieldValue, sourceMessageId: userMsgRef.id,
           });
           if (entry) entries.push(entry);
-          results.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
+          return { type: 'tool_result', tool_use_id: tu.id, content: result };
         } catch (err) {
-          results.push({ type: 'tool_result', tool_use_id: tu.id, content: `error: ${err.message}`, is_error: true });
+          return { type: 'tool_result', tool_use_id: tu.id, content: `error: ${err.message}`, is_error: true };
         }
+      }));
+      if (cutOff) {
+        results.push({ type: 'text', text: 'Your last reply was cut off. Continue logging from where you stopped (skip anything already logged above), then reply briefly.' });
       }
       messages.push({ role: 'user', content: results });
+
+      if (Date.now() - started > TIME_BUDGET_MS) {
+        partial = true;
+        break;
+      }
     }
   } catch (err) {
     console.error(err);
-    replyText = replyText || "Sorry — I couldn't reach the coach just now. Your message is saved; try again in a minute.";
+    failed = !entries.length;
+    replyText = replyText || (entries.length
+      ? ''
+      : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
   }
 
-  if (!replyText) replyText = entries.length ? 'Logged.' : '…';
+  if (partial) {
+    replyText = `${replyText ? replyText + '\n\n' : ''}That was a lot — I logged ${entries.length} entries so far. Paste the rest (from where it stops) and I'll keep going.`;
+  }
+  if (!replyText) {
+    replyText = entries.length ? summarize(entries) : "Hmm, I didn't catch anything to log there. Can you try again?";
+    if (!entries.length) {
+      failed = true;
+      console.error('Empty reply', { model, stopReason });
+    }
+  }
 
   await Promise.all([
     userRef.collection('messages').add({
-      role: 'assistant', text: replyText, entries, model,
+      role: 'assistant', text: replyText, entries, model, failed,
       createdAt: FieldValue.serverTimestamp(), day: clock.day,
     }),
     userRef.set({
@@ -246,6 +286,14 @@ export default async (req) => {
 
   return json(200, { reply: replyText, entries, model });
 };
+
+// Fallback reply when the model logged things but said nothing.
+function summarize(entries) {
+  const live = entries.filter(e => !e.deleted && e.kind !== 'profile');
+  if (!live.length) return 'Done.';
+  const days = [...new Set(live.map(e => e.day).filter(Boolean))].sort();
+  return `Logged ${live.length} ${live.length === 1 ? 'entry' : 'entries'}${days.length > 1 ? ` across ${days.length} days (${days[0]} to ${days.at(-1)})` : ''}.`;
+}
 
 // For each hunger check-in, find the most recent meal in the 6 hours before it.
 // This lets the coach spot repeats like "hungry ~2 h after a smoothie, three days running".

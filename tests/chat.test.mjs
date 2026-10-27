@@ -39,8 +39,10 @@ mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => ({
 
 // ---- fake Claude: first call logs a meal + hunger, second returns text ----
 const calls = [];
+const queue = []; // scripted responses; when empty, fall back to the default pair
 globalThis.fetch = async (url, init) => {
   const body = JSON.parse(init.body); calls.push(body);
+  if (queue.length) { const q = queue.shift(); return { ok: true, json: async () => ({ usage: { input_tokens: 1, output_tokens: 1 }, ...q }) }; }
   const n = calls.length;
   const content = n % 2 === 1
     ? [{ type: 'tool_use', id: 't1', name: 'log_meal', input: { description: 'banana smoothie', meal: 'breakfast', time: '08:00', calories: 300, protein_g: 5, fiber_g: 4, processing: 'processed' } },
@@ -51,6 +53,7 @@ globalThis.fetch = async (url, init) => {
 process.env.ALLOWED_EMAILS = 'will@tigerdumpsters.com';
 
 const { default: handler, linkHunger, pickModel, makeClock } = await import('../netlify/functions/chat.mjs');
+const { resolveWhen } = await import('../netlify/functions/lib/tools.mjs');
 const req = (token, body) => new Request('http://x/chat', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
 
 test('rejects bad token', async () => {
@@ -88,4 +91,47 @@ test('model routing', () => {
 test('clock', () => {
   const c = makeClock('America/New_York', new Date('2026-10-27T01:30:00Z'));
   assert.equal(c.day, '2026-10-26'); assert.equal(c.hhmm, '21:30');
+});
+
+test('resolveWhen puts past dates on the right local day', () => {
+  const clock = makeClock('America/New_York', new Date('2026-10-27T02:30:00Z')); // Oct 26 22:30 ET
+  const w = resolveWhen(clock, '2026-10-21', '08:15');
+  assert.equal(w.day, '2026-10-21');
+  assert.equal(w.at.toISOString(), '2026-10-21T12:15:00.000Z');
+  assert.equal(resolveWhen(clock, '2026-10-22').at.toISOString(), '2026-10-22T16:00:00.000Z'); // noon
+  assert.equal(resolveWhen(clock, '2027-01-01', '09:00').day, '2026-10-26'); // future date ignored
+});
+
+test('long paste: cut-off reply is resumed, entries land on their dates, no "…"', async () => {
+  const paste = 'FOOD LOG Oct 21-22\n' + 'Wed Oct 21 8:00am smoothie | 440 / 27 / 1.5\n'.repeat(60);
+  const meal = (id, date, time) => ({ type: 'tool_use', id, name: 'log_meal', input: { description: 'smoothie', date, time, calories: 440, protein_g: 27, fiber_g: 1.5, processing: 'processed' } });
+  queue.push(
+    { stop_reason: 'max_tokens', content: [meal('a', '2026-10-21', '08:00'), { type: 'tool_use', id: 'b', name: 'log_meal', input: { description: 'smoo' } }] },
+    { stop_reason: 'tool_use', content: [meal('c', '2026-10-22', '08:00'), { type: 'tool_use', id: 'h', name: 'log_hunger', input: { level: 3, date: '2026-10-22', time: '11:20' } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged 2 days.' }] },
+  );
+  store.set('users/u1', { ...store.get('users/u1'), onboarded: true });
+  const before = calls.length;
+  const r = await handler(req('good', { text: paste, tz: 'America/New_York' }));
+  const j = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(j));
+  assert.equal(j.reply, 'Logged 2 days.');
+  assert.equal(j.model, 'claude-haiku-5-5');
+  assert.deepEqual(j.entries.map(e => e.day), ['2026-10-21', '2026-10-22', '2026-10-22']);
+  // the truncated tool call was dropped and the model was told to continue
+  const second = calls[before + 1];
+  const lastUser = second.messages.at(-1).content;
+  assert.ok(lastUser.some(c => c.type === 'text' && /cut off/.test(c.text)));
+  assert.ok(!second.messages.at(-2).content.some(c => c.id === 'b'));
+  assert.equal(calls[before].max_tokens, 8000);
+});
+
+test('history hides failed replies and earlier long pastes', async () => {
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Hi.' }] });
+  await handler(req('good', { text: 'hello', tz: 'America/New_York' }));
+  const msgs = calls.at(-1).messages;
+  const flat = JSON.stringify(msgs);
+  assert.ok(flat.includes('already handled'));
+  assert.ok(!flat.includes('"…"'));
+  assert.equal(msgs[0].role, 'user');
 });

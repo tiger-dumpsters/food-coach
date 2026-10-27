@@ -235,7 +235,11 @@ function dayLabel(d) {
 }
 
 function msgHtml(m, at) {
-  const cards = (m.entries || []).map(cardHtml).filter(Boolean).join('');
+  // A pasted log can produce dozens of cards; show a few and summarize the rest.
+  const all = (m.entries || []).map(cardHtml).filter(Boolean);
+  const cards = all.length > 5
+    ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Trends</span></div>`
+    : all.join('');
   return `
     <div class="msg ${m.role === 'user' ? 'user' : 'assistant'}">
       <div class="bubble">${fmtText(m.text)}</div>
@@ -256,7 +260,7 @@ function cardHtml(e) {
       e.fat_g != null ? `${r(e.fat_g)} g fat` : '',
     ].filter(Boolean).map((n) => `<span>${n}</span>`).join('');
     return `<div class="card meal">
-      <span class="k">${e.updated ? 'Updated ' : ''}${esc(e.meal || 'Food')}${e.at ? ' · ' + esc(hhmm(new Date(e.at))) : ''}</span>
+      <span class="k">${e.updated ? 'Updated ' : ''}${esc(e.meal || 'Food')}${e.day && e.day !== localDay() ? ' · ' + esc(dayLabel(e.day)) : ''}${e.at ? ' · ' + esc(hhmm(new Date(e.at))) : ''}</span>
       <span class="title">${esc(e.description)}</span>
       <span class="nums">${nums}${e.processing ? `<span class="tag ${esc(e.processing)}">${esc(e.processing)}</span>` : ''}</span>
     </div>`;

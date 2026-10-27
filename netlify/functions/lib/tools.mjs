@@ -11,18 +11,16 @@ const time = {
   description: 'Local time HH:MM (24h) when it happened, if the user said or implied one. Omit to use the time the message was sent.',
 };
 
+const date = {
+  type: 'string',
+  description: 'Local date YYYY-MM-DD, only when it was NOT today (e.g. "yesterday", or a pasted log from earlier days). Omit for today.',
+};
+
 const mealFields = {
   description: { type: 'string', description: 'Short plain description, e.g. "2 eggs, wheat toast, coffee w/ milk"' },
   meal: { type: 'string', enum: ['breakfast', 'lunch', 'dinner', 'snack', 'drink'] },
+  date,
   time,
-  items: {
-    type: 'array',
-    items: {
-      type: 'object',
-      properties: { name: { type: 'string' }, qty: { type: 'string' } },
-      required: ['name'],
-    },
-  },
   calories: { type: 'number' },
   protein_g: { type: 'number' },
   fiber_g: { type: 'number' },
@@ -62,6 +60,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         type: { type: 'string', enum: WORKOUT_TYPES },
+        date,
         time,
         duration_min: { type: 'number' },
         distance: { type: 'number' },
@@ -80,6 +79,7 @@ export const TOOLS = [
       properties: {
         weight: { type: 'number' },
         unit: { type: 'string', enum: ['lb', 'kg'] },
+        date,
         time,
       },
       required: ['weight', 'unit'],
@@ -93,6 +93,7 @@ export const TOOLS = [
       properties: {
         level: { type: 'integer', minimum: 1, maximum: 5 },
         note: { type: 'string' },
+        date,
         time,
       },
       required: ['level'],
@@ -156,14 +157,22 @@ export const TOOLS = [
 
 const KIND_COLLECTION = { meal: 'meals', workout: 'workouts', weight: 'weighins', hunger: 'checkins' };
 
-// Build a Date for an HH:MM local time on the user's local day.
-function atLocalTime(clock, hhmm) {
-  if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return clock.now;
-  const [h, m] = hhmm.split(':').map(Number);
-  const nowMin = clock.localMinutes;
-  const deltaMin = (h * 60 + m) - nowMin;
-  // A time "later" than now most likely means earlier today was meant wrongly; keep as given.
-  return new Date(clock.now.getTime() + deltaMin * 60000);
+// Resolve when something happened: { day: 'YYYY-MM-DD', at: Date } in the user's local time.
+// `date` (optional) is a local date; `time` (optional) is local HH:MM. Missing time on a
+// past date defaults to noon so it still lands on the right day.
+export function resolveWhen(clock, date, hhmm) {
+  const validDate = typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) && date <= clock.day;
+  const day = validDate ? date : clock.day;
+  const dayOffset = Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${clock.day}T00:00:00Z`)) / 864e5);
+  let minutes;
+  if (hhmm && /^\d{1,2}:\d{2}$/.test(hhmm)) {
+    const [h, m] = hhmm.split(':').map(Number);
+    minutes = h * 60 + m;
+  } else {
+    minutes = day === clock.day ? clock.localMinutes : 12 * 60;
+  }
+  const deltaMin = dayOffset * 1440 + (minutes - clock.localMinutes);
+  return { day, at: new Date(clock.now.getTime() + deltaMin * 60000) };
 }
 
 function clean(obj) {
@@ -172,45 +181,37 @@ function clean(obj) {
   return out;
 }
 
+const LOG_TOOLS = {
+  log_meal: { col: 'meals', kind: 'meal', label: 'meal' },
+  log_workout: { col: 'workouts', kind: 'workout', label: 'workout', extra: { source: 'chat' } },
+  log_weight: { col: 'weighins', kind: 'weight', label: 'weigh-in' },
+  log_hunger: { col: 'checkins', kind: 'hunger', label: 'hunger check-in' },
+};
+
 // Execute one tool call. Returns { result (string for the model), entry (for the UI card) | null }.
 export async function runTool(name, input, { userRef, clock, FieldValue, sourceMessageId }) {
-  const base = { day: clock.day, createdAt: FieldValue.serverTimestamp(), sourceMessageId };
+  if (LOG_TOOLS[name]) {
+    const { col, kind, label, extra = {} } = LOG_TOOLS[name];
+    const { day, at } = resolveWhen(clock, input.date, input.time);
+    const data = clean({
+      ...input, ...extra, date: undefined, time: undefined,
+      day, at, createdAt: FieldValue.serverTimestamp(), sourceMessageId,
+    });
+    const ref = await userRef.collection(col).add(data);
+    return { result: `logged ${label} id=${ref.id} on ${day}`, entry: { kind, id: ref.id, ...strip(data) } };
+  }
 
   switch (name) {
-    case 'log_meal': {
-      const at = atLocalTime(clock, input.time);
-      const data = clean({ ...base, ...input, at, time: undefined });
-      const ref = await userRef.collection('meals').add(data);
-      return { result: `logged meal id=${ref.id}`, entry: { kind: 'meal', id: ref.id, ...strip(data) } };
-    }
     case 'update_meal': {
-      const { id, ...rest } = input;
+      const { id, date: d, time: t, ...rest } = input;
       const ref = userRef.collection('meals').doc(id);
       const snap = await ref.get();
       if (!snap.exists) return { result: `no meal with id ${id}`, entry: null };
-      const patch = clean({ ...rest, time: undefined, updatedAt: FieldValue.serverTimestamp() });
-      if (rest.time) patch.at = atLocalTime(clock, rest.time);
+      const patch = clean({ ...rest, updatedAt: FieldValue.serverTimestamp() });
+      if (d || t) Object.assign(patch, resolveWhen(clock, d || snap.data().day, t));
       await ref.update(patch);
       const merged = { ...snap.data(), ...patch };
       return { result: `updated meal ${id}`, entry: { kind: 'meal', id, updated: true, ...strip(merged) } };
-    }
-    case 'log_workout': {
-      const at = atLocalTime(clock, input.time);
-      const data = clean({ ...base, ...input, at, time: undefined, source: 'chat' });
-      const ref = await userRef.collection('workouts').add(data);
-      return { result: `logged workout id=${ref.id}`, entry: { kind: 'workout', id: ref.id, ...strip(data) } };
-    }
-    case 'log_weight': {
-      const at = atLocalTime(clock, input.time);
-      const data = clean({ ...base, ...input, at, time: undefined });
-      const ref = await userRef.collection('weighins').add(data);
-      return { result: `logged weigh-in id=${ref.id}`, entry: { kind: 'weight', id: ref.id, ...strip(data) } };
-    }
-    case 'log_hunger': {
-      const at = atLocalTime(clock, input.time);
-      const data = clean({ ...base, ...input, at, time: undefined });
-      const ref = await userRef.collection('checkins').add(data);
-      return { result: `logged hunger check-in id=${ref.id}`, entry: { kind: 'hunger', id: ref.id, ...strip(data) } };
     }
     case 'delete_entry': {
       const col = KIND_COLLECTION[input.kind];
