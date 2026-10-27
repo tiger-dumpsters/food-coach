@@ -2,6 +2,12 @@
   publish = "public"
   functions = "netlify/functions"
 
+# The Firebase *web* API key is a public identifier that must ship to the browser
+# (access is controlled by Firestore rules), so exempt just that value from
+# secrets scanning. Real secrets stay in Netlify env vars and are still scanned.
+[build.environment]
+  SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyCWePmqjWQfbo5lb9UZd4qNJIVWv6sCCm4"
+
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["firebase-admin"]
