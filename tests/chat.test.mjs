@@ -135,3 +135,28 @@ test('history hides failed replies and earlier long pastes', async () => {
   assert.ok(!flat.includes('"…"'));
   assert.equal(msgs[0].role, 'user');
 });
+
+test('meal totals come from items, and known foods are reused in context', async () => {
+  const { withItemTotals } = await import('../netlify/functions/lib/tools.mjs');
+  const t = withItemTotals({ calories: 999, items: [
+    { name: 'GF bread', qty: '2 slices', calories: 220, protein_g: 4, fiber_g: 3, fat_g: 8 },
+    { name: 'apple', qty: '1', calories: 95, protein_g: 0.5, fiber_g: 4.4, fat_g: 0.3 },
+  ] });
+  assert.equal(t.calories, 315); assert.equal(t.fiber_g, 7.4); assert.equal(t.fat_g, 8.3);
+
+  queue.push(
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'm', name: 'log_meal', input: { description: 'toast + apple', processing: 'mixed', items: [
+      { name: 'Homemade GF bread', qty: '2 slices', calories: 220, protein_g: 4, fiber_g: 3 },
+      { name: 'Apple', qty: '1', calories: 95, protein_g: 0.5, fiber_g: 4.4 }] } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged.' }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] },
+  );
+  const r = await handler(req('good', { text: 'toast and an apple', tz: 'America/New_York' }));
+  const j = await r.json();
+  assert.equal(j.entries[0].calories, 315);
+  await handler(req('good', { text: 'same again', tz: 'America/New_York' }));
+  const sys = calls.at(-1).system[1].text;
+  assert.ok(sys.includes('Known foods'));
+  assert.ok(sys.includes('- Homemade GF bread | 2 slices | 220 cal'), sys);
+  assert.equal(calls.at(-1).temperature, 0);
+});

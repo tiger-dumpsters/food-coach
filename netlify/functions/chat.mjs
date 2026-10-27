@@ -8,7 +8,7 @@
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { TOOLS, runTool } from './lib/tools.mjs';
+import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
@@ -86,7 +86,7 @@ async function callClaude({ model, system, messages }) {
       'x-api-key': process.env.ANTHROPIC_API_KEY,
       'anthropic-version': '2023-06-01',
     },
-    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, tools: TOOLS, messages }),
+    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, temperature: 0, system, tools: TOOLS, messages }),
   });
   if (!res.ok) {
     const detail = await res.text();
@@ -179,6 +179,7 @@ export default async (req) => {
   }
   const recentWeights = rows(weightsSnap, clock.tz).reverse();
   const hungerLinks = linkHunger(checkins, meals);
+  const knownFoods = foodLibrary(meals);
 
   // Save the user's message first so entries can point back to it.
   const userMsgRef = await userRef.collection('messages').add({
@@ -190,7 +191,7 @@ export default async (req) => {
   if (messages.length && messages.at(-1).role === 'user') messages.at(-1).content += `\n\n${text}`;
   else messages.push({ role: 'user', content: text });
 
-  const systemText = buildSystem({ profile, clock, today, week, recentWeights, hungerLinks });
+  const systemText = buildSystem({ profile, clock, today, week, recentWeights, hungerLinks, knownFoods });
   const [core, context] = splitSystem(systemText);
   const system = [
     { type: 'text', text: core, cache_control: { type: 'ephemeral' } },
@@ -286,6 +287,22 @@ export default async (req) => {
 
   return json(200, { reply: replyText, entries, model });
 };
+
+// The user's own foods with the numbers already used for them (most recent wins),
+// so repeat foods get the same estimate every time.
+export function foodLibrary(meals, max = 60) {
+  const seen = new Map();
+  const sorted = [...meals].sort((a, b) => (b.at || 0) - (a.at || 0));
+  for (const m of sorted) {
+    for (const it of m.items || []) {
+      if (typeof it.calories !== 'number') continue;
+      const key = `${foodKey(it.name)}|${String(it.qty || '').toLowerCase().trim()}`;
+      if (!seen.has(key)) seen.set(key, { ...it, uses: 0 });
+      seen.get(key).uses += 1;
+    }
+  }
+  return [...seen.values()].sort((a, b) => b.uses - a.uses).slice(0, max);
+}
 
 // Fallback reply when the model logged things but said nothing.
 function summarize(entries) {

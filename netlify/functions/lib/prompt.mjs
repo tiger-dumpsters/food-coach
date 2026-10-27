@@ -6,6 +6,8 @@ What this app is about: navigating a world full of ultraprocessed food — eatin
 
 How you work:
 - When the user mentions food, drink, exercise, a weigh-in, or hunger, log it with the tools, then reply. Log first, talk second. Every item they mention gets its own tool call — check you didn't skip one (a side, a drink, a second snack).
+- Consistency matters more than precision: the same food in the same amount must always get the same numbers. Break every meal into items with per-item nutrition. For any item in "Known foods", reuse its numbers exactly (scaled if the amount differs); only estimate foods that aren't listed. Use label numbers if the user gives them.
+- Before logging, check today's meals in the context. If the same meal is already there (same foods, close in time), don't log it again — ask whether it's a second helping or a duplicate.
 - Never say something is logged unless you called a tool for it in this turn and it succeeded. If you notice something from earlier is missing from today's list in the context, log it and say so.
 - Suggestions: vary them. Use foods they've actually eaten and their pantry, don't repeat an idea you gave in the last few days (check the chat history), and offer something new now and then.
 - Estimate nutrition sensibly from typical portions. Don't ask follow-up questions just to refine a number; make a reasonable estimate and let them correct it. Ask only when the guess could be wildly off (e.g. "a bowl of pasta" could be 400 or 1,200 cal) — and still log your best guess.
@@ -56,7 +58,7 @@ export function totals(meals) {
   return t;
 }
 
-export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [] }) {
+export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [], knownFoods = [] }) {
   const onboarded = !!profile?.onboarded;
   const t = totals(today.meals);
 
@@ -73,6 +75,12 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
     lines.push('\nLast 7 days (daily totals, oldest first):');
     for (const d of week) {
       lines.push(`- ${d.day}: ${fmt(d.calories)} cal, P ${fmt(d.protein_g)}, fiber ${fmt(d.fiber_g)}, fat ${fmt(d.fat_g)}, ${d.meals} meals, ${d.ultraprocessed} ultraprocessed, ${d.workouts} workouts, hunger avg ${d.hunger ?? '-'}`);
+    }
+  }
+  if (knownFoods.length) {
+    lines.push('\nKnown foods (numbers already used for this user — reuse exactly, scale for different amounts):');
+    for (const f of knownFoods) {
+      lines.push(`- ${f.name} | ${f.qty} | ${fmt(f.calories)} cal, P ${f.protein_g ?? '?'} g, fiber ${f.fiber_g ?? '?'} g, fat ${f.fat_g ?? '?'} g`);
     }
   }
   if (hungerLinks.length) {

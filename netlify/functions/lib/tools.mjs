@@ -21,6 +21,23 @@ const mealFields = {
   meal: { type: 'string', enum: ['breakfast', 'lunch', 'dinner', 'snack', 'drink'] },
   date,
   time,
+  items: {
+    type: 'array',
+    description: 'One entry per food in the meal, with its own nutrition. Meal totals are computed from these.',
+    items: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Food name, brand if given, e.g. "Whole Foods tomato Parmesan soup"' },
+        qty: { type: 'string', description: 'Amount as given, e.g. "1.5 servings", "2 slices"' },
+        calories: { type: 'number' },
+        protein_g: { type: 'number' },
+        fiber_g: { type: 'number' },
+        fat_g: { type: 'number' },
+        carbs_g: { type: 'number' },
+      },
+      required: ['name', 'qty', 'calories', 'protein_g', 'fiber_g'],
+    },
+  },
   calories: { type: 'number' },
   protein_g: { type: 'number' },
   fiber_g: { type: 'number' },
@@ -37,11 +54,11 @@ const mealFields = {
 export const TOOLS = [
   {
     name: 'log_meal',
-    description: 'Record food or drink the user says they ate/drank. Estimate nutrition sensibly; one call per meal or snack.',
+    description: 'Record food or drink the user says they ate/drank. One call per meal or snack, with an items entry per food. Reuse the numbers from "Known foods" in the context for anything listed there, scaled to the amount.',
     input_schema: {
       type: 'object',
       properties: mealFields,
-      required: ['description', 'calories', 'protein_g', 'fiber_g', 'processing'],
+      required: ['description', 'items', 'processing'],
     },
   },
   {
@@ -188,7 +205,24 @@ const LOG_TOOLS = {
 };
 
 // Execute one tool call. Returns { result (string for the model), entry (for the UI card) | null }.
+// Meal totals always equal the sum of the items, so the same foods give the same totals.
+export function withItemTotals(input) {
+  const items = Array.isArray(input.items) ? input.items.filter(i => i && typeof i.calories === 'number') : [];
+  if (!items.length) return input;
+  const sum = (k) => Math.round(items.reduce((a, i) => a + (Number(i[k]) || 0), 0) * 10) / 10;
+  const out = { ...input, calories: Math.round(sum('calories')), protein_g: sum('protein_g'), fiber_g: sum('fiber_g') };
+  if (items.some(i => typeof i.fat_g === 'number')) out.fat_g = sum('fat_g');
+  if (items.some(i => typeof i.carbs_g === 'number')) out.carbs_g = sum('carbs_g');
+  return out;
+}
+
+// Normalized key for matching the same food across meals.
+export function foodKey(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 export async function runTool(name, input, { userRef, clock, FieldValue, sourceMessageId }) {
+  if (name === 'log_meal' || name === 'update_meal') input = withItemTotals(input);
   if (LOG_TOOLS[name]) {
     const { col, kind, label, extra = {} } = LOG_TOOLS[name];
     const { day, at } = resolveWhen(clock, input.date, input.time);
