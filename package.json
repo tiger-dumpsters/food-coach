@@ -1,0 +1,17 @@
+{
+  "name": "food-coach",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chat-first food and fitness coach (beta)",
+  "scripts": {
+    "test": "node --experimental-test-module-mocks --test tests/chat.test.mjs",
+    "check":"node --check netlify/functions/chat.mjs && node --check netlify/functions/lib/prompt.mjs && node --check netlify/functions/lib/tools.mjs && node --check public/js/app.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
