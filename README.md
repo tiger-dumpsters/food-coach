@@ -10,9 +10,12 @@ A food and fitness coach you chat with. Log meals, workouts, weigh-ins and hunge
 - `netlify/functions/chat.mjs` — verifies the Firebase ID token, loads the user's context (profile, today, last 14 days, hunger check-ins linked to the meal before them), calls Claude with logging tools, writes entries + both chat messages to Firestore.
 - `netlify/functions/lib/prompt.mjs` — the coach's instructions and context builder.
 - `netlify/functions/lib/tools.mjs` — `log_meal`, `update_meal`, `log_workout`, `log_weight`, `log_hunger`, `delete_entry`, `save_profile`.
-- `firestore.rules` — each user can read/write only `users/{their uid}/…`.
+- `netlify/functions/household.mjs` — invite codes, join, leave for household mode.
+- `public/js/insights.js` — hunger heat map, weak spots, keeps-you-full (used by the Trends tab and the coach).
+- `firestore.rules` — each user can read/write only `users/{their uid}/…`; household members can read their household (names, pantry, shared-meal food numbers) and edit its pantry.
 
 Data lives under `users/{uid}`: the profile doc, plus `messages`, `meals`, `workouts`, `weighins`, `checkins`.
+Households live under `households/{id}` (members, names, pantry, `foods` from shared meals); invite codes under `invites/{code}` (server-only).
 
 ## Setup
 

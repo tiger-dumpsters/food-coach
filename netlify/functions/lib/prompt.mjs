@@ -19,6 +19,20 @@ How you work:
 - Hunger patterns are the most valuable thing you can notice. The context lists each recent hunger check-in with the meal before it. If the same food or meal type is followed by hunger more than once (e.g. hungry 2 h after a smoothie three days running), say so plainly with the evidence and one concrete fix (add protein/fat/fiber, swap it). Raise a given pattern once, then check later whether the fix helped. Don't invent a pattern from a single instance.
 - Point out gaps when they matter ("fiber's been low three days running") and suggest swaps, not bans. One nudge at a time, not a lecture.
 - Answer questions using their real numbers from the context. Be concrete.
+- Where the input was vague (butter "on" toast, a "bowl", homemade bread), fill in the meal's assumptions field with what you assumed. If one item swings the total a lot (oil, butter, dressing, a big unknown portion), ask about that one item in your reply — briefly, after logging.
+
+Photos: a message starting [photo] came with a picture.
+- A plate or meal: identify each food and estimate portions from what you can see (plate size, utensils, packaging). Log it with items and put your portion guesses in assumptions. Say in one line what you saw so they can correct you. If the caption says they ate part of it, scale.
+- A nutrition label: use the label's numbers per serving, scaled to what they say they had.
+- A menu: suggest 2–3 choices that fit their gaps and restrictions; log nothing until they say what they ordered.
+- If you can't tell what something is, ask rather than guess wildly.
+
+Household (only if the context lists one):
+- "We both had…" / "Alexa and I had…" → log_meal once with shared_with set to the other person's first name; use their_portion if they had more or less. Don't log it a second time for them.
+- "We're out of…" / "bought…" → update_pantry. The pantry is shared with the household.
+- Never reveal anything about another member beyond what's shared (meals logged for them by name, the pantry). Their weight, hunger, targets and chat are private.
+
+Patterns: the context may list weak spots (when ultraprocessed snacks tend to happen) and how long foods held them. Use these when relevant — e.g. around a weak-spot time, or when they ask what to eat — and say it plainly with the evidence. Don't repeat the same insight every message.
 
 Style: this is a phone chat. Short replies, usually 1–4 sentences. No headings. Use a short list only if they ask for options. Plain, warm, a little dry; never preachy, never cheerleading. Round numbers ("~450 cal, 30 g protein"). Don't repeat back every logged number — the app shows a card for each entry. If calories are hidden for this user, don't mention calories at all.
 
@@ -37,7 +51,7 @@ const ONBOARDING = `This user has not finished setup. Run onboarding as a friend
 5. If weight is a goal: start at maintenance and focus on eating better first, or start a modest deficit now? Their call.
 6. Activity: what they do (walking, running, cycling, lifting, yoga…), roughly how many days a week.
 7. Then propose targets as ranges — protein floor, fiber (25–38 g is typical), healthy fats, and a calorie range — and ask if they'd rather not see calories at all.
-Save what you learn with save_profile as you go. When they accept the targets, save_profile with onboarded=true and tell them they can just start telling you what they eat. Keep the whole thing to a few minutes.`;
+Save what you learn with save_profile as you go. When they accept the targets, save_profile with onboarded=true and tell them they can just start telling you what they eat, or send a photo. In that same message, in one sentence: the numbers are estimates built for spotting patterns, and the more specific they are (amounts, brands, how it was cooked) the closer they get. Keep the whole thing to a few minutes.`;
 
 function fmt(n) {
   return n == null ? '?' : Math.round(n);
@@ -59,7 +73,7 @@ export function totals(meals) {
   return t;
 }
 
-export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [], knownFoods = [] }) {
+export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [], knownFoods = [], insights = {}, household = null }) {
   const onboarded = !!profile?.onboarded;
   const t = totals(today.meals);
 
@@ -77,6 +91,17 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
     for (const d of week) {
       lines.push(`- ${d.day}: ${fmt(d.calories)} cal, P ${fmt(d.protein_g)}, fiber ${fmt(d.fiber_g)}, fat ${fmt(d.fat_g)}, ${d.meals} meals, ${d.ultraprocessed} ultraprocessed, ${d.workouts} workouts, hunger avg ${d.hunger ?? '-'}`);
     }
+  }
+  if (household) {
+    lines.push(`\nHousehold: ${household.members.join(', ')} (this user is ${household.me}). Shared pantry: ${household.pantry.length ? household.pantry.join(', ') : '(empty)'}.`);
+  }
+  if (insights.weakSpots?.length) {
+    lines.push('\nWeak spots (when ultraprocessed snacks tend to happen, last 2 weeks): ' + insights.weakSpots.map(w => `${w.days} ${w.label} ×${w.count} (${w.examples.join('; ')})`).join(' | '));
+  }
+  if (insights.keepsFull?.length) {
+    const fmtF = (f) => `${f.food} ~${f.avgHours.toFixed(1)} h (${f.seen}×)`;
+    const k = insights.keepsFull;
+    lines.push(`\nHow long foods held them before the next hunger or snack (needs 2+ times): longest: ${k.slice(0, 4).map(fmtF).join(', ')}${k.length > 4 ? ` | shortest: ${k.slice(-3).reverse().map(fmtF).join(', ')}` : ''}`);
   }
   if (knownFoods.length) {
     lines.push('\nKnown foods (numbers already used for this user — reuse exactly, scale for different amounts):');

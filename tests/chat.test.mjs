@@ -5,13 +5,14 @@ import assert from 'node:assert';
 const store = new Map(); // path -> data
 let idc = 0;
 const sentinel = (k, v) => ({ __s: k, v });
-const FieldValue = { serverTimestamp: () => new Date(), increment: (n) => sentinel('inc', n) };
+const FieldValue = { serverTimestamp: () => new Date(), increment: (n) => sentinel('inc', n), arrayUnion: (...v) => sentinel('union', v), delete: () => sentinel('del') };
+function applyVal(cur, v) { if (v && v.__s === 'union') return [...new Set([...(cur || []), ...v.v])]; return v; }
 function docRef(path) {
   return {
     id: path.split('/').at(-1), path,
     async get() { const d = store.get(path); return { exists: !!d, id: this.id, data: () => d }; },
     async set(data, opts) { store.set(path, opts?.merge ? { ...(store.get(path) || {}), ...data } : data); },
-    async update(p) { const cur = { ...(store.get(path) || {}) }; for (const [k, v] of Object.entries(p)) { if (k.includes('.')) { const [a, b] = k.split('.'); cur[a] = { ...(cur[a] || {}), [b]: v }; } else cur[k] = v; } store.set(path, cur); },
+    async update(p) { const cur = { ...(store.get(path) || {}) }; for (const [k, v] of Object.entries(p)) { if (k.includes('.')) { const [a, b] = k.split('.'); cur[a] = { ...(cur[a] || {}) }; if (v && v.__s === 'del') delete cur[a][b]; else cur[a][b] = v; } else if (v && v.__s === 'del') delete cur[k]; else cur[k] = applyVal(cur[k], v); } store.set(path, cur); },
     async delete() { store.delete(path); },
     collection(name) { return colRef(`${path}/${name}`); },
   };
@@ -34,8 +35,15 @@ function colRef(path, filters = [], order = null, lim = null) {
   };
 }
 mock.module('firebase-admin/app', { namedExports: { initializeApp() {}, cert: () => ({}), getApps: () => [1] } });
-mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (t !== 'good') throw new Error('bad'); return { uid: 'u1', email: 'will@tigerdumpsters.com' }; } }) } });
-mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => ({ collection: (n) => colRef(n) }), FieldValue } });
+const USERS = { good: { uid: 'u1', email: 'will@tigerdumpsters.com', name: 'Will Stewart' }, alexa: { uid: 'u2', email: 'alexa@example.com', name: 'Alexa Stewart' } };
+mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; } }) } });
+const fakeDb = {
+  collection: (n) => colRef(n),
+  async runTransaction(fn) {
+    return fn({ get: (ref) => ref.get(), update: (ref, p) => ref.update(p), set: (ref, d, o) => ref.set(d, o), delete: (ref) => ref.delete() });
+  },
+};
+mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => fakeDb, FieldValue } });
 
 // ---- fake Claude: first call logs a meal + hunger, second returns text ----
 const calls = [];
@@ -50,7 +58,7 @@ globalThis.fetch = async (url, init) => {
     : [{ type: 'text', text: 'Logged. Add Greek yogurt next time.' }];
   return { ok: true, json: async () => ({ content, stop_reason: n % 2 === 1 ? 'tool_use' : 'end_turn', usage: { input_tokens: 100, output_tokens: 20 } }) };
 };
-process.env.ALLOWED_EMAILS = 'will@tigerdumpsters.com';
+process.env.ALLOWED_EMAILS = 'will@tigerdumpsters.com,alexa@example.com';
 
 const { default: handler, linkHunger, pickModel, makeClock } = await import('../netlify/functions/chat.mjs');
 const { resolveWhen } = await import('../netlify/functions/lib/tools.mjs');
@@ -203,4 +211,74 @@ test('reply that claims "logged" without a tool call gets corrected', async () =
   await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
   const hist = JSON.stringify(calls.at(-1).messages);
   assert.ok(hist.includes('[app: saved 1'), hist.slice(-600));
+});
+
+test('household: invite, join, shared meal lands in both logs with same numbers', async () => {
+  const { default: hh } = await import('../netlify/functions/household.mjs');
+  const hreq = (token, body) => new Request('http://x/household', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  store.set('users/u2', { onboarded: true, staples: ['Greek yogurt'] });
+  const inv = await (await hh(hreq('good', { action: 'invite' }))).json();
+  assert.match(inv.code, /^[A-Z2-9]{6}$/);
+  const bad = await hh(hreq('alexa', { action: 'join', code: 'ZZZZZZ' }));
+  assert.equal(bad.status, 400);
+  const joined = await (await hh(hreq('alexa', { action: 'join', code: inv.code.toLowerCase() }))).json();
+  assert.equal(joined.householdId, inv.householdId);
+  const h = store.get(`households/${inv.householdId}`);
+  assert.deepEqual(h.members, ['u1', 'u2']);
+  assert.equal(h.names.u2, 'Alexa');
+  assert.ok(h.pantry.includes('Greek yogurt'));
+  assert.ok(!store.has(`invites/${inv.code}`)); // single use
+
+  queue.push(
+    { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 's1', name: 'log_meal', input: { description: 'chicken rice bowl', meal: 'lunch', processing: 'whole', shared_with: ['Alexa'], their_portion: 0.5,
+        items: [{ name: 'chicken rice bowl', qty: '1 bowl', calories: 600, protein_g: 40, fiber_g: 6 }] } },
+      { type: 'tool_use', id: 's2', name: 'update_pantry', input: { add: ['salmon'], remove: ['greek yogurt'] } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged for both of you.' }] },
+  );
+  const r = await handler(req('good', { text: 'Alexa and I both had chicken rice bowls, she had half', tz: 'America/New_York' }));
+  const j = await r.json();
+  assert.deepEqual(j.entries[0].sharedWith, ['Alexa']);
+  const alexaMeals = [...store.entries()].filter(([k]) => k.startsWith('users/u2/meals/')).map(([, v]) => v);
+  assert.equal(alexaMeals.length, 1);
+  assert.equal(alexaMeals[0].calories, 300);
+  assert.equal(alexaMeals[0].sharedFrom.name, 'Will');
+  const alexaMsgs = [...store.entries()].filter(([k]) => k.startsWith('users/u2/messages/')).map(([, v]) => v);
+  assert.match(alexaMsgs[0].text, /Will logged a shared lunch/);
+  const h2 = store.get(`households/${inv.householdId}`);
+  assert.ok(h2.pantry.includes('salmon') && !h2.pantry.some((p) => /yogurt/i.test(p)));
+  assert.ok([...store.keys()].some((k) => k.startsWith(`households/${inv.householdId}/foods/`)));
+
+  // Alexa's coach sees the shared food numbers and household in context
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
+  await handler(req('alexa', { text: 'what is in the pantry?', tz: 'America/New_York' }));
+  const sys = calls.at(-1).system[1].text;
+  assert.ok(sys.includes('Household: Will, Alexa'), sys.slice(0, 400));
+  assert.ok(sys.includes('chicken rice bowl | 1 bowl | 600 cal'));
+  // privacy: nothing about Will's hunger or his unshared meals in Alexa's context
+  assert.ok(!sys.includes('starving'));
+  assert.ok(!sys.includes('banana smoothie'));
+  assert.ok(!sys.includes('Homemade GF bread'));
+
+  const left = await hh(hreq('alexa', { action: 'leave' }));
+  assert.equal(left.status, 200);
+  assert.deepEqual(store.get(`households/${inv.householdId}`).members, ['u1']);
+});
+
+test('photo: image goes to the smart model, thumb saved, history marks it', async () => {
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Looks like eggs and toast.' }] });
+  const r = await handler(req('good', { text: 'breakfast', tz: 'America/New_York', image: { media_type: 'image/jpeg', data: 'AAAA' }, thumb: 'data:image/jpeg;base64,BBBB' }));
+  assert.equal(r.status, 200);
+  const call = calls.at(-1);
+  assert.equal(call.model, 'claude-sonnet-5-5');
+  const last = call.messages.at(-1).content;
+  assert.ok(Array.isArray(last) && last.some((c) => c.type === 'image'));
+  assert.ok(last.some((c) => c.type === 'text' && c.text.includes('[photo] breakfast')));
+  const saved = [...store.entries()].find(([k, v]) => k.startsWith('users/u1/messages/') && v.photo);
+  assert.equal(saved[1].thumb, 'data:image/jpeg;base64,BBBB');
+  const big = await handler(req('good', { text: 'x', image: { media_type: 'image/gif', data: 'AA' } }));
+  assert.equal(big.status, 400);
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
+  await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
+  assert.ok(JSON.stringify(calls.at(-1).messages).includes('[photo] breakfast'));
 });

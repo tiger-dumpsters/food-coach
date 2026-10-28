@@ -87,8 +87,10 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .topbar h1 { font-size: 1.35rem; }
 
 .view { min-height: 0; }
-.scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; }
-.stack { padding: 16px 16px 32px; display: grid; gap: 14px; max-width: 640px; margin: 0 auto; }
+.scroll { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; }
+.stack { padding: 16px 16px 32px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; max-width: 640px; margin: 0 auto; }
+.panel, .panel * { min-width: 0; }
+.panel { overflow-wrap: break-word; }
 
 .tabbar {
   display: grid; grid-template-columns: repeat(4, 1fr);
@@ -164,8 +166,9 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
   border-radius: 999px; padding: 6px 12px; font-size: 0.82rem; color: var(--ink-2);
 }
 .composer { display: flex; gap: 8px; align-items: flex-end; }
+.composer textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .composer textarea {
-  flex: 1; resize: none; border: 1px solid var(--line); background: var(--surface);
+  flex: 1; min-width: 0; resize: none; font-size: 16px; border: 1px solid var(--line); background: var(--surface);
   color: var(--ink); border-radius: 22px; padding: 11px 16px; font: inherit;
   max-height: 140px; outline: none;
 }
@@ -204,9 +207,9 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .gap-list li.ok { background: var(--accent-soft); }
 
 .log-list { margin: 0; padding: 0; list-style: none; display: grid; }
-.log-list li { display: grid; grid-template-columns: 52px 1fr auto; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 0.92rem; align-items: baseline; }
+.log-list li { display: grid; grid-template-columns: 66px 1fr auto; gap: 8px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 0.92rem; align-items: baseline; }
 .log-list li:first-child { border-top: 0; }
-.log-list .t { color: var(--ink-3); font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+.log-list .t { color: var(--ink-3); font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .log-list .n { color: var(--ink-2); font-size: 0.8rem; text-align: right; white-space: nowrap; }
 
 .chart svg { width: 100%; height: auto; display: block; }
@@ -220,17 +223,88 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 /* Settings form */
 .field { display: grid; gap: 4px; margin-bottom: 12px; }
 .field label { font-size: 0.82rem; color: var(--ink-2); font-weight: 500; }
-.field input[type=text], .field input[type=number] {
+.field textarea { resize: vertical; line-height: 1.4; }
+.field input[type=text], .field input[type=number], .field textarea {
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
   border-radius: 12px; padding: 10px 12px; font: inherit;
+  width: 100%; min-width: 0; font-size: 16px; /* 16px stops iOS zooming in */
 }
 .field .hint { font-size: 0.75rem; color: var(--ink-3); }
 .toggle { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
 .toggle:first-of-type { border-top: 0; }
 .toggle input { width: 44px; height: 26px; accent-color: var(--accent); }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .pick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .pick button { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 5px 11px; font-size: 0.82rem; color: var(--ink-2); }
 .pick button.on { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .saved-note { color: var(--accent); font-size: 0.85rem; }
+
+/* ---------- Photos ---------- */
+.photo-btn {
+  flex: none; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center;
+  color: var(--ink-2); border: 1px solid var(--line); background: var(--surface); cursor: pointer;
+}
+.photo-preview {
+  display: flex; align-items: center; gap: 10px; padding: 0 2px 8px; font-size: 0.82rem;
+}
+.photo-preview img { width: 52px; height: 52px; object-fit: cover; border-radius: 10px; }
+.photo-preview .muted { flex: 1; }
+.photo-remove { border: 0; background: var(--surface-2); width: 30px; height: 30px; border-radius: 50%; font-size: 1.1rem; }
+.bubble .thumb { display: block; width: 180px; max-width: 100%; border-radius: 12px; margin: -2px -4px 6px; }
+
+/* ---------- Meal card details ---------- */
+.card details { margin-top: 4px; }
+.card summary { cursor: pointer; color: var(--accent); font-size: 0.78rem; font-weight: 600; list-style: none; }
+.card summary::-webkit-details-marker { display: none; }
+.card .items { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.card .items li { display: flex; justify-content: space-between; gap: 10px; color: var(--ink-2); font-size: 0.8rem; }
+.card .items li span:last-child { white-space: nowrap; }
+.card .assume { margin-top: 6px; font-size: 0.78rem; color: var(--ink-3); font-style: italic; }
+.card .share { font-size: 0.75rem; color: var(--accent); font-weight: 600; }
+.card.pantry { border-left-color: var(--amber); }
+
+/* ---------- Today: processing filter ---------- */
+.mix span, .legend button { cursor: pointer; }
+.mix span.dim { opacity: 0.3; }
+.legend button { border: 0; background: none; padding: 2px 0; color: inherit; font: inherit; }
+.legend button.on { font-weight: 700; color: var(--ink); }
+.mix-hint { font-size: 0.75rem; color: var(--ink-3); margin-top: 6px; }
+.log-list li.hl { background: var(--warm-soft); border-radius: 10px; margin: 0 -8px; padding: 9px 8px; }
+.log-list li.hl.whole { background: var(--accent-soft); }
+.log-list li.dim { opacity: 0.4; }
+.log-list .tag { margin-left: 6px; }
+
+/* ---------- Charts: tap readout ---------- */
+.readout { min-height: 1.3em; font-size: 0.85rem; color: var(--ink-2); margin: -4px 0 6px; }
+.readout b { color: var(--ink); }
+.chart rect.hit { fill: transparent; cursor: pointer; }
+.chart rect.bar.sel { opacity: 0.6; }
+
+/* ---------- Hunger heat map ---------- */
+.heat { display: grid; grid-template-columns: 34px repeat(9, minmax(0, 1fr)); gap: 3px; font-size: 0.68rem; color: var(--ink-3); }
+.heat .h { text-align: center; }
+.heat .d { align-self: center; }
+.heat .c { aspect-ratio: 1; border-radius: 5px; background: var(--surface-2); border: 0; padding: 0; cursor: pointer; }
+.heat .c.sel { outline: 2px solid var(--ink); outline-offset: 1px; }
+.heat-key { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--ink-3); margin-top: 8px; }
+.heat-key i { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+.insight-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.insight-list li { display: grid; gap: 2px; font-size: 0.9rem; }
+.insight-list .sub2 { color: var(--ink-3); font-size: 0.78rem; }
+.full-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px 44px; gap: 8px; align-items: center; font-size: 0.86rem; padding: 4px 0; }
+.full-row .bar { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.full-row .fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.full-row.short .fill { background: var(--warm); }
+.full-row .hrs { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.full-head { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); font-weight: 600; margin: 10px 0 2px; }
+
+/* ---------- Household ---------- */
+.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 1.6rem; letter-spacing: 0.2em; font-weight: 700; margin: 6px 0; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.chip-list span { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 4px 6px 4px 10px; font-size: 0.82rem; }
+.chip-list button { border: 0; background: none; color: var(--ink-3); font-size: 1rem; line-height: 1; padding: 0 4px; }
+.row-input { display: flex; gap: 8px; }
+.row-input input { flex: 1; }
+.disclaimer { font-size: 0.85rem; color: var(--ink-2); line-height: 1.5; }
+.error-inline { color: var(--warm); font-size: 0.85rem; margin-top: 6px; }

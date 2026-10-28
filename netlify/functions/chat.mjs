@@ -1,15 +1,15 @@
 // POST /.netlify/functions/chat
-// Body: { text: string, tz: "America/New_York" }
+// Body: { text: string, tz: "America/New_York", image?: { media_type, data }, thumb?: dataURL }
 // Header: Authorization: Bearer <Firebase ID token>
 //
 // Verifies the user, loads their context from Firestore, lets Claude log entries via
 // tools, saves both chat messages, and returns the reply plus the entries it logged.
 
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { FieldValue } from 'firebase-admin/firestore';
+import { admin, verify } from './lib/admin.mjs';
 import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
+import { weakSpots, keepsYouFull } from '../../public/js/insights.js';
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const MODEL_SMART = process.env.MODEL_SMART || 'claude-sonnet-5-5';
@@ -17,14 +17,9 @@ const MAX_ROUNDS = 8;
 const MAX_TOKENS = 8000;
 const TIME_BUDGET_MS = 50_000; // stay under Netlify's function limit
 const LONG_PASTE = 1500;       // chars; treated as a bulk import
+const MAX_IMAGE_B64 = 2_500_000; // ~1.8 MB image after the phone shrinks it
+const IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 
-function admin() {
-  if (!getApps().length) {
-    const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT || '{}');
-    initializeApp({ credential: cert(sa) });
-  }
-  return { auth: getAuth(), db: getFirestore() };
-}
 
 function json(status, body) {
   return new Response(JSON.stringify(body), {
@@ -114,6 +109,7 @@ function historyToMessages(history) {
   for (const h of history) {
     const role = h.role === 'assistant' ? 'assistant' : 'user';
     let text = (h.text || '').trim();
+    if (h.photo) text = `[photo]${text ? ` ${text}` : ''}`;
     if (!text || h.failed || text === '…') continue;
     // Earlier long pastes were already handled (or failed); don't let the model redo them.
     if (role === 'user' && text.length > LONG_PASTE) {
@@ -131,26 +127,24 @@ function historyToMessages(history) {
 export default async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
 
-  let uid, email;
-  const { auth, db } = admin();
-  try {
-    const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
-    const decoded = await auth.verifyIdToken(token);
-    uid = decoded.uid;
-    email = (decoded.email || '').toLowerCase();
-  } catch {
-    return json(401, { error: 'Not signed in' });
-  }
-
-  const allowed = (process.env.ALLOWED_EMAILS || '').toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
-  if (allowed.length && !allowed.includes(email)) {
-    return json(403, { error: 'This beta is invite-only.' });
-  }
+  const { db } = admin();
+  const who = await verify(req);
+  if (who.error) return json(who.status, { error: who.error });
+  const { uid, email } = who;
 
   let body;
   try { body = await req.json(); } catch { return json(400, { error: 'Bad JSON' }); }
   const text = String(body.text || '').trim().slice(0, 4000);
-  if (!text) return json(400, { error: 'Empty message' });
+  let image = null;
+  if (body.image) {
+    const { media_type: mt, data } = body.image;
+    if (!IMAGE_TYPES.includes(mt) || typeof data !== 'string' || data.length > MAX_IMAGE_B64) {
+      return json(400, { error: 'Photo too large or unsupported' });
+    }
+    image = { type: 'image', source: { type: 'base64', media_type: mt, data } };
+  }
+  const thumb = typeof body.thumb === 'string' && body.thumb.startsWith('data:image/') && body.thumb.length < 60_000 ? body.thumb : null;
+  if (!text && !image) return json(400, { error: 'Empty message' });
 
   const clock = makeClock(body.tz);
   const userRef = db.collection('users').doc(uid);
@@ -169,6 +163,8 @@ export default async (req) => {
   if (!profileSnap.exists) {
     await userRef.set({ email, createdAt: FieldValue.serverTimestamp(), onboarded: false });
   }
+  const household = await loadHousehold(db, profile?.householdId, uid);
+  const me = { uid, name: firstName(profile?.name, email) };
 
   const meals = rows(mealsSnap, clock.tz).sort((a, b) => (a.at || 0) - (b.at || 0));
   const workouts = rows(workoutsSnap, clock.tz);
@@ -193,26 +189,40 @@ export default async (req) => {
   }
   const recentWeights = rows(weightsSnap, clock.tz).reverse();
   const hungerLinks = linkHunger(checkins, meals);
-  const knownFoods = foodLibrary(meals);
+  const knownFoods = mergeFoods(household?.foods || [], foodLibrary(meals));
+  const insights = {
+    weakSpots: weakSpots(meals, clock.tz),
+    keepsFull: keepsYouFull(meals, checkins),
+  };
 
   // Save the user's message first so entries can point back to it.
   const userMsgRef = await userRef.collection('messages').add({
     role: 'user', text, createdAt: FieldValue.serverTimestamp(), day: clock.day,
+    ...(image ? { photo: true } : {}), ...(thumb ? { thumb } : {}),
   });
 
   const history = rows(histSnap, clock.tz).reverse();
   const messages = [...historyToMessages(history)];
-  if (messages.length && messages.at(-1).role === 'user') messages.at(-1).content += `\n\n${text}`;
-  else messages.push({ role: 'user', content: text });
+  const turnText = image ? `[photo]${text ? ` ${text}` : ' (no caption)'}` : text;
+  const userContent = image ? [image, { type: 'text', text: turnText }] : turnText;
+  if (messages.length && messages.at(-1).role === 'user') {
+    const prev = messages.pop().content;
+    messages.push({ role: 'user', content: image ? [{ type: 'text', text: prev }, ...userContent] : `${prev}\n\n${turnText}` });
+  } else {
+    messages.push({ role: 'user', content: userContent });
+  }
 
-  const systemText = buildSystem({ profile, clock, today, week, recentWeights, hungerLinks, knownFoods });
+  const systemText = buildSystem({
+    profile, clock, today, week, recentWeights, hungerLinks, knownFoods, insights,
+    household: household ? { members: household.members.map((m) => m.name), me: me.name, pantry: household.pantry } : null,
+  });
   const [core, context] = splitSystem(systemText);
   const system = [
     { type: 'text', text: core, cache_control: { type: 'ephemeral' } },
     { type: 'text', text: context },
   ];
 
-  const model = pickModel(text, profile?.onboarded);
+  const model = image ? MODEL_SMART : pickModel(text, profile?.onboarded);
   const entries = [];
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let replyText = '';
@@ -265,17 +275,19 @@ export default async (req) => {
 
       messages.push({ role: 'assistant', content });
       // Write all of this round's entries in parallel (a pasted log can be dozens).
-      const results = await Promise.all(toolUses.map(async (tu) => {
+      const outcomes = await Promise.all(toolUses.map(async (tu) => {
         try {
           const { result, entry } = await runTool(tu.name, tu.input || {}, {
-            userRef, clock, FieldValue, sourceMessageId: userMsgRef.id,
+            userRef, clock, FieldValue, sourceMessageId: userMsgRef.id, db, household, me,
           });
-          if (entry) entries.push(entry);
-          return { type: 'tool_result', tool_use_id: tu.id, content: result };
+          return { entry, block: { type: 'tool_result', tool_use_id: tu.id, content: result } };
         } catch (err) {
-          return { type: 'tool_result', tool_use_id: tu.id, content: `error: ${err.message}`, is_error: true };
+          return { entry: null, block: { type: 'tool_result', tool_use_id: tu.id, content: `error: ${err.message}`, is_error: true } };
         }
       }));
+      // Keep cards in the order the user mentioned things.
+      for (const o of outcomes) if (o.entry) entries.push(o.entry);
+      const results = outcomes.map((o) => o.block);
       if (cutOff) {
         results.push({ type: 'text', text: 'Your last reply was cut off. Continue logging from where you stopped (skip anything already logged above), then reply briefly.' });
       }
@@ -343,6 +355,35 @@ export function foodLibrary(meals, max = 60) {
     }
   }
   return [...seen.values()].sort((a, b) => b.uses - a.uses).slice(0, max);
+}
+
+function firstName(name, email) {
+  const n = String(name || '').trim().split(/\s+/)[0];
+  if (n) return n;
+  const local = String(email || '').split('@')[0].split(/[._-]/)[0];
+  return local ? local[0].toUpperCase() + local.slice(1) : 'Someone';
+}
+
+// Household: members (names only), shared pantry, shared food numbers.
+async function loadHousehold(db, hid, uid) {
+  if (!hid) return null;
+  const ref = db.collection('households').doc(hid);
+  const [snap, foodsSnap] = await Promise.all([ref.get(), ref.collection('foods').limit(200).get()]);
+  if (!snap.exists) return null;
+  const h = snap.data();
+  if (!(h.members || []).includes(uid)) return null;
+  const members = (h.members || []).map((m) => ({ uid: m, name: (h.names || {})[m] || 'Member' }));
+  return { id: hid, ref, members, pantry: h.pantry || [], foods: foodsSnap.docs.map((d) => d.data()) };
+}
+
+// Household numbers win over personal ones for the same food + amount.
+export function mergeFoods(shared, personal, max = 80) {
+  const out = new Map();
+  for (const f of [...shared, ...personal]) {
+    const k = `${foodKey(f.name)}|${String(f.qty || '').toLowerCase().trim()}`;
+    if (!out.has(k)) out.set(k, f);
+  }
+  return [...out.values()].slice(0, max);
 }
 
 // Fallback reply when the model logged things but said nothing.

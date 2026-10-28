@@ -1,7 +1,7 @@
 // Minimal service worker: caches the app shell so it opens instantly from the home
 // screen. Data always comes live from Firestore and the chat function.
-const CACHE = 'food-coach-v2';
-const SHELL = ['/', '/index.html', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/manifest.webmanifest', '/icons/icon.svg'];
+const CACHE = 'food-coach-v3';
+const SHELL = ['/', '/index.html', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/js/insights.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

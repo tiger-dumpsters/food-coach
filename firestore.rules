@@ -2,7 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // Each user can read and write only their own data. Nobody else -- including
-    // other beta users -- can see anything under users/{uid}.
+    // other beta users and household members -- can see anything under users/{uid}.
+    // (Meals shared with a household member are copied into their log by the server.)
     match /users/{uid} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
 
@@ -11,7 +12,24 @@ service cloud.firestore {
       }
     }
 
-    // Everything else is closed.
+    // Households: members can read the household (names + shared pantry) and edit the
+    // pantry. Membership changes go through the server (invite codes).
+    match /households/{hid} {
+      function isMember() {
+        return request.auth != null &&
+          request.auth.uid in get(/databases/$(database)/documents/households/$(hid)).data.members;
+      }
+      allow read: if isMember();
+      allow update: if isMember() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['pantry']);
+
+      // Shared food numbers: members can read; the server writes.
+      match /foods/{food} {
+        allow read: if isMember();
+      }
+    }
+
+    // Everything else is closed (including invite codes).
     match /{document=**} {
       allow read, write: if false;
     }

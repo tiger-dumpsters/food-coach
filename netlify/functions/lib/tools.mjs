@@ -49,6 +49,10 @@ const mealFields = {
     description: 'Overall processing level of the meal (NOVA-style).',
   },
   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+  assumptions: {
+    type: 'string',
+    description: 'One short line on what you assumed where the input was vague, e.g. "1 tbsp butter; 1 serving soup = 1 cup". Omit if nothing was assumed.',
+  },
 };
 
 export const TOOLS = [
@@ -57,7 +61,18 @@ export const TOOLS = [
     description: 'Record food or drink the user says they ate/drank. One call per meal or snack, with an items entry per food. Reuse the numbers from "Known foods" in the context for anything listed there, scaled to the amount.',
     input_schema: {
       type: 'object',
-      properties: mealFields,
+      properties: {
+        ...mealFields,
+        shared_with: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'First names of household members who ate the same thing ("we both had…", "Alexa and I had…"). The meal is logged to their accounts too.',
+        },
+        their_portion: {
+          type: 'number',
+          description: 'Portion for the people in shared_with relative to the user, e.g. 0.75 if they had less. Default 1.',
+        },
+      },
       required: ['description', 'items', 'processing'],
     },
   },
@@ -126,6 +141,17 @@ export const TOOLS = [
         id: { type: 'string' },
       },
       required: ['kind', 'id'],
+    },
+  },
+  {
+    name: 'update_pantry',
+    description: 'Update the list of foods usually in the house ("bought salmon", "we\'re out of yogurt"). Shared with the household if the user is in one.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        add: { type: 'array', items: { type: 'string' } },
+        remove: { type: 'array', items: { type: 'string' } },
+      },
     },
   },
   {
@@ -221,17 +247,53 @@ export function foodKey(name) {
   return String(name || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
-export async function runTool(name, input, { userRef, clock, FieldValue, sourceMessageId }) {
+// Scale a meal's items for someone who had a different portion.
+export function scaleMeal(meal, factor) {
+  if (!factor || factor === 1) return meal;
+  const f = (v) => (typeof v === 'number' ? Math.round(v * factor * 10) / 10 : v);
+  const items = (meal.items || []).map((it) => ({
+    ...it, qty: `${it.qty} ×${factor}`,
+    calories: f(it.calories), protein_g: f(it.protein_g), fiber_g: f(it.fiber_g), fat_g: f(it.fat_g), carbs_g: f(it.carbs_g),
+  }));
+  return withItemTotals({ ...meal, items });
+}
+
+// Save a shared meal's item numbers to the household food library, so the same shared
+// food gets the same numbers in every member's log.
+async function saveFoods(household, items, uid, FieldValue) {
+  if (!household?.ref || !Array.isArray(items)) return;
+  await Promise.all(items.filter((it) => it && typeof it.calories === 'number' && it.name).map((it) => {
+    const id = `${foodKey(it.name)}|${String(it.qty || '').toLowerCase().trim()}`.replace(/\//g, '-').slice(0, 300);
+    return household.ref.collection('foods').doc(id).set({
+      name: it.name, qty: it.qty || '', calories: it.calories, protein_g: it.protein_g ?? null,
+      fiber_g: it.fiber_g ?? null, fat_g: it.fat_g ?? null, carbs_g: it.carbs_g ?? null,
+      by: uid, updatedAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+  }));
+}
+
+export async function runTool(name, input, ctx) {
+  const { userRef, clock, FieldValue, sourceMessageId, household, me } = ctx;
   if (name === 'log_meal' || name === 'update_meal') input = withItemTotals(input);
   if (LOG_TOOLS[name]) {
     const { col, kind, label, extra = {} } = LOG_TOOLS[name];
     const { day, at } = resolveWhen(clock, input.date, input.time);
+    const { shared_with: sharedWith, their_portion: portion, ...fields } = input;
     const data = clean({
-      ...input, ...extra, date: undefined, time: undefined,
+      ...fields, ...extra, date: undefined, time: undefined,
       day, at, createdAt: FieldValue.serverTimestamp(), sourceMessageId,
     });
     const ref = await userRef.collection(col).add(data);
-    return { result: `logged ${label} id=${ref.id} on ${day}`, entry: { kind, id: ref.id, ...strip(data) } };
+    const entry = { kind, id: ref.id, ...strip(data) };
+    let note = '';
+    if (name === 'log_meal' && Array.isArray(sharedWith) && sharedWith.length) {
+      const res = await shareMeal({ ...ctx, data, sharedWith, portion });
+      entry.sharedWith = res.names;
+      note = res.names.length ? `; also logged for ${res.names.join(', ')}` : `; could not share (${res.reason})`;
+      // Only foods from shared meals go in the household library; everyone's own log stays private.
+      if (res.names.length) await saveFoods(household, data.items, me?.uid, FieldValue).catch((e) => console.error('saveFoods', e.message));
+    }
+    return { result: `logged ${label} id=${ref.id} on ${day}${note}`, entry };
   }
 
   switch (name) {
@@ -245,6 +307,18 @@ export async function runTool(name, input, { userRef, clock, FieldValue, sourceM
       await ref.update(patch);
       const merged = { ...snap.data(), ...patch };
       return { result: `updated meal ${id}`, entry: { kind: 'meal', id, updated: true, ...strip(merged) } };
+    }
+    case 'update_pantry': {
+      const add = (input.add || []).map((x) => String(x).trim()).filter(Boolean);
+      const remove = new Set((input.remove || []).map((x) => foodKey(x)));
+      const target = household?.ref || userRef;
+      const field = household?.ref ? 'pantry' : 'staples';
+      const snap = await target.get();
+      const cur = (snap.exists ? snap.data()[field] : null) || [];
+      const next = [...cur.filter((x) => !remove.has(foodKey(x)))];
+      for (const a of add) if (!next.some((x) => foodKey(x) === foodKey(a))) next.push(a);
+      await target.set({ [field]: next }, { merge: true });
+      return { result: `pantry now: ${next.join(', ') || '(empty)'}`, entry: { kind: 'pantry', add, remove: input.remove || [], shared: !!household?.ref } };
     }
     case 'delete_entry': {
       const col = KIND_COLLECTION[input.kind];
@@ -267,6 +341,29 @@ export async function runTool(name, input, { userRef, clock, FieldValue, sourceM
     default:
       return { result: `unknown tool ${name}`, entry: null };
   }
+}
+
+// Copy a shared meal into other household members' logs, with a note in their chat.
+async function shareMeal({ db, household, me, FieldValue, data, sharedWith, portion }) {
+  if (!household?.ref) return { names: [], reason: 'not in a household' };
+  const wanted = sharedWith.map((n) => String(n).toLowerCase().trim());
+  const targets = household.members.filter((m) => m.uid !== me.uid &&
+    wanted.some((w) => w === 'household' || w === 'everyone' || m.name.toLowerCase().startsWith(w) || w.startsWith(m.name.toLowerCase())));
+  if (!targets.length) return { names: [], reason: `no household member named ${sharedWith.join(', ')}` };
+  const factor = typeof portion === 'number' && portion > 0 && portion <= 3 ? portion : 1;
+  const base = scaleMeal({ ...data }, factor);
+  await Promise.all(targets.map(async (t) => {
+    const uref = db.collection('users').doc(t.uid);
+    const copy = clean({ ...base, sourceMessageId: null, sharedFrom: { uid: me.uid, name: me.name }, createdAt: FieldValue.serverTimestamp() });
+    const ref = await uref.collection('meals').add(copy);
+    await uref.collection('messages').add({
+      role: 'assistant',
+      text: `${me.name} logged a shared ${data.meal || 'meal'} for you: ${data.description}. If your portion was different, just tell me.`,
+      entries: [{ kind: 'meal', id: ref.id, ...strip(copy) }],
+      shared: true, day: data.day, createdAt: FieldValue.serverTimestamp(),
+    });
+  }));
+  return { names: targets.map((t) => t.name) };
 }
 
 // Drop Firestore sentinels / Dates so the entry can go back to the browser as JSON.

@@ -8,6 +8,7 @@ import {
   setDoc, updateDoc,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { hungerHeatmap, weakSpots, keepsYouFull, BUCKETS, WEEKDAYS, bucketRange } from './insights.js';
 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
@@ -24,6 +25,12 @@ const state = {
   view: 'chat',
   today: { meals: [], workouts: [], checkins: [], weighins: [] },
   unsub: [],
+  household: null,        // { id, members, names, pantry }
+  householdUnsub: null,
+  householdId: null,
+  mixFilter: null,        // Today: highlight foods of one processing level
+  photo: null,            // { data, media_type, thumb } waiting to send
+  invite: null,           // last invite code created
 };
 
 // ---------- helpers ----------
@@ -48,6 +55,8 @@ function hhmm(d) {
   return d ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
 }
 function r(n) { return n == null ? '–' : Math.round(n); }
+// Calories rounded to the nearest 10: estimates shouldn't look more precise than they are.
+function rc(n) { return n == null ? '–' : (Math.round(n / 10) * 10).toLocaleString(); }
 function hideCal() { return !!state.profile?.hide_calories; }
 function rows(snap) { return snap.docs.map((d) => ({ id: d.id, ...d.data() })); }
 
@@ -76,6 +85,7 @@ getRedirectResult(auth).catch(() => {});
 onAuthStateChanged(auth, (user) => {
   state.unsub.forEach((u) => u());
   state.unsub = [];
+  watchHousehold(null);
   state.user = user;
   $('#signin').hidden = !!user;
   $('#app').hidden = !user;
@@ -88,6 +98,7 @@ function startSession(user) {
   state.unsub.push(onSnapshot(uref, (snap) => {
     state.profile = snap.exists() ? snap.data() : null;
     document.querySelectorAll('.weight-only').forEach((el) => { el.hidden = !state.profile?.track_weight; });
+    watchHousehold(state.profile?.householdId || null);
     renderThread();
     if (state.view === 'today') renderToday();
     if (state.view === 'settings') renderSettings();
@@ -107,6 +118,31 @@ function startSession(user) {
       if (state.view === 'today') renderToday();
     }));
   }
+}
+
+function watchHousehold(hid) {
+  if (hid === state.householdId) return;
+  if (state.householdUnsub) state.householdUnsub();
+  state.householdUnsub = null;
+  state.householdId = hid;
+  state.household = null;
+  if (!hid) { if (state.view === 'settings') renderSettings(); return; }
+  state.householdUnsub = onSnapshot(doc(db, 'households', hid), (snap) => {
+    state.household = snap.exists() ? { id: hid, ...snap.data() } : null;
+    if (state.view === 'settings') renderSettings();
+  }, () => { state.household = null; });
+}
+
+async function api(path, body) {
+  const token = await state.user.getIdToken();
+  const res = await fetch(`/.netlify/functions/${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+  return data;
 }
 
 // ---------- navigation ----------
@@ -146,10 +182,12 @@ function autosize() {
 $('#composer').addEventListener('submit', (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text || state.pending) return;
+  if ((!text && !state.photo) || state.pending) return;
   input.value = '';
   autosize();
-  send(text);
+  const photo = state.photo;
+  clearPhoto();
+  send(text, photo);
 });
 
 $('#chips').addEventListener('click', (e) => {
@@ -161,25 +199,60 @@ $('#chips').addEventListener('click', (e) => {
   autosize();
 });
 
-async function send(text) {
-  state.pending = text;
+// ---------- photos ----------
+$('#photo-input').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    state.photo = await preparePhoto(file);
+    $('#photo-img').src = state.photo.thumb;
+    $('#photo-preview').hidden = false;
+    input.focus();
+  } catch {
+    alert("Couldn't read that photo. Try another?");
+  }
+});
+$('#photo-remove').addEventListener('click', clearPhoto);
+function clearPhoto() {
+  state.photo = null;
+  $('#photo-preview').hidden = true;
+  $('#photo-img').removeAttribute('src');
+}
+
+// Shrink on the phone before upload: ~1280px for the coach, ~320px thumbnail for the chat.
+async function preparePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const draw = (max, q) => {
+      const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.naturalWidth * scale);
+      c.height = Math.round(img.naturalHeight * scale);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      return c.toDataURL('image/jpeg', q);
+    };
+    const full = draw(1280, 0.82);
+    return { media_type: 'image/jpeg', data: full.split(',')[1], thumb: draw(320, 0.7) };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function send(text, photo = null) {
+  state.pending = { text, thumb: photo?.thumb || null };
   $('#send').disabled = true;
   renderThread();
   try {
-    const token = await state.user.getIdToken();
-    const res = await fetch('/.netlify/functions/chat', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text, tz: TZ }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || `Server error ${res.status}`);
-    }
-    await res.json(); // messages arrive through the Firestore listener
+    await api('chat', {
+      text, tz: TZ,
+      ...(photo ? { image: { media_type: photo.media_type, data: photo.data }, thumb: photo.thumb } : {}),
+    }); // messages arrive through the Firestore listener
   } catch (err) {
     state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: `Couldn't send that (${err.message}). Try again?`, local: true });
     input.value = input.value || text;
+    if (photo && !state.photo) { state.photo = photo; $('#photo-img').src = photo.thumb; $('#photo-preview').hidden = false; }
   } finally {
     state.pending = null;
     $('#send').disabled = false;
@@ -218,8 +291,8 @@ function renderThread() {
   }
   // Show the pending message until the server's copy arrives.
   if (state.pending) {
-    const echoed = msgs.length && msgs.at(-1).role === 'user' && msgs.at(-1).text === state.pending;
-    if (!echoed) html += msgHtml({ role: 'user', text: state.pending }, new Date());
+    const echoed = msgs.length && msgs.at(-1).role === 'user' && msgs.at(-1).text === state.pending.text;
+    if (!echoed) html += msgHtml({ role: 'user', text: state.pending.text, thumb: state.pending.thumb }, new Date());
     html += `<div class="msg assistant"><div class="bubble typing" aria-label="Coach is typing"><i></i><i></i><i></i></div></div>`;
   }
   el.innerHTML = html;
@@ -240,29 +313,54 @@ function msgHtml(m, at) {
   const cards = all.length > 5
     ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Trends</span></div>`
     : all.join('');
+  const body = m.role === 'user' ? blurWeights(fmtText(m.text)) : fmtText(m.text);
+  const thumb = m.thumb ? `<img class="thumb" src="${esc(m.thumb)}" alt="Meal photo">` : (m.photo ? '<span class="muted">[photo]</span><br>' : '');
   return `
     <div class="msg ${m.role === 'user' ? 'user' : 'assistant'}">
-      <div class="bubble">${fmtText(m.text)}</div>
+      <div class="bubble">${thumb}${body}</div>
       ${cards ? `<div class="cards">${cards}</div>` : ''}
       <span class="time">${esc(hhmm(at))}</span>
     </div>`;
+}
+
+// In the user's own messages, blur numbers next to weigh-in words ("weighed 236").
+function blurWeights(html) {
+  if (!/\b(weigh|weighed|weight|weighing|scale|lbs?|kg|pounds?)\b/i.test(html)) return html;
+  return html.replace(/\b(\d{2,3}(?:\.\d)?)(\s?(?:lbs?|pounds?|kg))?\b/gi, (m0, num, unit) => {
+    const n = Number(num);
+    const plausible = unit ? true : n >= 70 && n <= 450;
+    return plausible ? `<span class="blur" title="Tap to show">${m0}</span>` : m0;
+  });
 }
 
 function cardHtml(e) {
   if (e.kind === 'profile') return `<div class="card"><span class="k">Profile updated</span></div>`;
   const del = e.deleted ? ' deleted' : '';
   if (e.deleted) return `<div class="card ${e.kind}${del}"><span class="k">Removed ${esc(e.kind)}</span></div>`;
+  if (e.kind === 'pantry') {
+    const bits = [e.add?.length ? `+ ${e.add.join(', ')}` : '', e.remove?.length ? `− ${e.remove.join(', ')}` : ''].filter(Boolean).join(' · ');
+    return `<div class="card pantry"><span class="k">${e.shared ? 'Household pantry' : 'Pantry'} updated</span><span class="nums">${esc(bits)}</span></div>`;
+  }
   if (e.kind === 'meal') {
     const nums = [
-      hideCal() ? '' : `~${r(e.calories)} cal`,
+      hideCal() ? '' : `~${rc(e.calories)} cal`,
       `${r(e.protein_g)} g protein`,
       `${r(e.fiber_g)} g fiber`,
       e.fat_g != null ? `${r(e.fat_g)} g fat` : '',
     ].filter(Boolean).map((n) => `<span>${n}</span>`).join('');
+    const items = (e.items || []).filter((it) => it && it.name);
+    const details = items.length > 1 || e.assumptions ? `
+      <details><summary>Breakdown${e.assumptions ? ' & assumptions' : ''}</summary>
+        ${items.length ? `<ul class="items">${items.map((it) => `<li><span>${esc(it.qty ? `${it.qty} ` : '')}${esc(it.name)}</span><span>${hideCal() ? '' : `${rc(it.calories)} cal · `}${r(it.protein_g)}p · ${r(it.fiber_g)}f</span></li>`).join('')}</ul>` : ''}
+        ${e.assumptions ? `<div class="assume">Assumed: ${esc(e.assumptions)}</div>` : ''}
+      </details>` : '';
+    const share = e.sharedWith?.length ? `<span class="share">Also logged for ${esc(e.sharedWith.join(', '))}</span>`
+      : e.sharedFrom ? `<span class="share">Shared by ${esc(e.sharedFrom.name)}</span>` : '';
     return `<div class="card meal">
       <span class="k">${e.updated ? 'Updated ' : ''}${esc(e.meal || 'Food')}${e.day && e.day !== localDay() ? ' · ' + esc(dayLabel(e.day)) : ''}${e.at ? ' · ' + esc(hhmm(new Date(e.at))) : ''}</span>
       <span class="title">${esc(e.description)}</span>
       <span class="nums">${nums}${e.processing ? `<span class="tag ${esc(e.processing)}">${esc(e.processing)}</span>` : ''}</span>
+      ${share}${details}
     </div>`;
   }
   if (e.kind === 'workout') {
@@ -295,7 +393,7 @@ function renderToday() {
   const meter = (cls, label, val, target, unit) => {
     const pct = target ? Math.min(100, (val / target) * 100) : 0;
     return `<div class="meter ${cls}">
-      <div class="row"><span>${label}</span><span><b>${r(val)}</b>${target ? ` / ${r(target)}` : ''} ${unit}</span></div>
+      <div class="row"><span>${label}</span><span><b>${unit ? r(val) : rc(val)}</b>${target ? ` / ${unit ? r(target) : rc(target)}` : ''} ${unit}</span></div>
       <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
     </div>`;
   };
@@ -321,11 +419,17 @@ function renderToday() {
 
   const mix = mixHtml(meals);
 
+  const f = state.mixFilter;
   const log = [
-    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, n: [hideCal() ? '' : `${r(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
+    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, proc: m.processing || 'mixed', n: [hideCal() ? '' : `${rc(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
     ...workouts.map((w) => ({ at: toDate(w.at), label: `Workout: ${w.type}`, n: w.duration_min ? `${r(w.duration_min)} min` : '' })),
     ...checkins.map((c) => ({ at: toDate(c.at), label: `Hunger ${c.level}/5${c.note ? ' — ' + c.note : ''}`, n: '' })),
   ].sort((a, b) => (a.at || 0) - (b.at || 0));
+  const logRow = (x) => {
+    const cls = f ? (x.proc === f ? `hl ${f}` : 'dim') : '';
+    const tag = x.proc === 'ultraprocessed' || x.proc === 'processed' ? `<span class="tag ${x.proc}">${x.proc}</span>` : '';
+    return `<li class="${cls}"><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}${tag}</span><span class="n">${esc(x.n)}</span></li>`;
+  };
 
   el.innerHTML = `
     <section class="panel">
@@ -336,8 +440,12 @@ function renderToday() {
     <section class="panel"><h2>Gaps to fill</h2>${gapHtml}</section>
     <section class="panel"><h2>Whole vs processed</h2>${mix}</section>
     <section class="panel"><h2>Log</h2>
-      ${log.length ? `<ul class="log-list">${log.map((x) => `<li><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}</span><span class="n">${esc(x.n)}</span></li>`).join('')}</ul>` : '<p class="muted">Empty so far.</p>'}
+      ${log.length ? `<ul class="log-list">${log.map(logRow).join('')}</ul>` : '<p class="muted">Empty so far.</p>'}
     </section>`;
+  el.querySelectorAll('[data-mix]').forEach((b) => b.addEventListener('click', () => {
+    state.mixFilter = state.mixFilter === b.dataset.mix ? null : b.dataset.mix;
+    renderToday();
+  }));
 }
 
 function sum(meals) {
@@ -358,9 +466,11 @@ function mixHtml(meals) {
   const c = { whole: 0, processed: 0, mixed: 0, ultraprocessed: 0 };
   meals.forEach((m) => { c[m.processing || 'mixed'] = (c[m.processing || 'mixed'] || 0) + 1; });
   const n = meals.length;
-  const bar = Object.entries(c).filter(([, v]) => v).map(([k, v]) => `<span style="width:${(v / n) * 100}%;background:${MIX_COLORS[k]}"></span>`).join('');
-  const leg = Object.entries(c).filter(([, v]) => v).map(([k, v]) => `<span><i style="background:${MIX_COLORS[k]}"></i>${k} ${v}</span>`).join('');
-  return `<div class="mix">${bar}</div><div class="legend">${leg}</div>`;
+  const f = state.mixFilter;
+  const parts = Object.entries(c).filter(([, v]) => v);
+  const bar = parts.map(([k, v]) => `<span data-mix="${k}" class="${f && f !== k ? 'dim' : ''}" style="width:${(v / n) * 100}%;background:${MIX_COLORS[k]}" title="${k}"></span>`).join('');
+  const leg = parts.map(([k, v]) => `<button type="button" data-mix="${k}" class="${f === k ? 'on' : ''}"><i style="background:${MIX_COLORS[k]}"></i>${k} ${v}</button>`).join('');
+  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${f} foods in the log below · tap again to clear` : 'Tap a color to see which foods it is'}</div>`;
 }
 
 // ---------- Trends ----------
@@ -369,14 +479,15 @@ async function renderTrends() {
   el.innerHTML = '<p class="muted">Loading…</p>';
   const uref = doc(db, 'users', state.user.uid);
   const today = localDay();
-  const start = dayMinus(today, 13);
+  const start = dayMinus(today, 27); // 4 weeks for hunger patterns; charts show 14 days
   const [mS, wS, cS, kS] = await Promise.all([
     getDocs(query(collection(uref, 'meals'), where('day', '>=', start))),
     getDocs(query(collection(uref, 'workouts'), where('day', '>=', start))),
     getDocs(query(collection(uref, 'checkins'), where('day', '>=', start))),
     getDocs(query(collection(uref, 'weighins'), orderBy('at', 'desc'), limit(60))),
   ]);
-  const meals = rows(mS), workouts = rows(wS), checkins = rows(cS), weights = rows(kS).reverse();
+  const withAt = (x) => ({ ...x, at: toDate(x.at) });
+  const meals = rows(mS).map(withAt), workouts = rows(wS), checkins = rows(cS).map(withAt), weights = rows(kS).reverse();
 
   const days = Array.from({ length: 14 }, (_, i) => dayMinus(today, 13 - i));
   const perDay = days.map((d) => {
@@ -390,8 +501,7 @@ async function renderTrends() {
   const avg = (k) => logged.length ? logged.reduce((a, d) => a + d[k], 0) / logged.length : 0;
   const totalMeals = logged.reduce((a, d) => a + d.meals, 0);
   const upfShare = totalMeals ? Math.round((logged.reduce((a, d) => a + d.upf, 0) / totalMeals) * 100) : 0;
-  const hungerDays = perDay.filter((d) => d.hunger != null);
-  const hungerAvg = hungerDays.length ? (hungerDays.reduce((a, d) => a + d.hunger, 0) / hungerDays.length).toFixed(1) : '–';
+  const recentWorkouts = workouts.filter((w) => w.day >= days[0]).length;
 
   let weightHtml = '';
   if (state.profile?.track_weight) {
@@ -400,6 +510,10 @@ async function renderTrends() {
       <div class="blur" id="wchart">${avg7.length >= 2 ? lineChart(avg7) : '<p class="muted">A few more weigh-ins and a trend will show here.</p>'}</div></section>`;
   }
 
+  const chart = (title, key, target, color, unit) => `
+    <section class="panel chart"><h2>${title}</h2><div class="readout">Tap a bar for the exact number</div>
+      ${barChart(perDay, key, target, color, unit)}</section>`;
+
   el.innerHTML = `
     <section class="panel">
       <h2>Last 14 days</h2>
@@ -407,37 +521,100 @@ async function renderTrends() {
       <div class="stat-row">
         <div class="stat"><div class="v">${r(avg('protein_g'))}<small> g</small></div><div class="l">avg protein</div></div>
         <div class="stat"><div class="v">${r(avg('fiber_g'))}<small> g</small></div><div class="l">avg fiber</div></div>
-        <div class="stat"><div class="v">${upfShare}%</div><div class="l">ultraprocessed</div></div>
+        <div class="stat"><div class="v">${upfShare}%</div><div class="l">ultra-processed</div></div>
       </div>
     </section>
-    <section class="panel chart"><h2>Protein by day</h2>${barChart(perDay, 'protein_g', tg.protein_g, 'var(--accent)')}</section>
-    <section class="panel chart"><h2>Fiber by day</h2>${barChart(perDay, 'fiber_g', tg.fiber_g, 'var(--amber)')}</section>
+    ${chart('Protein by day', 'protein_g', tg.protein_g, 'var(--accent)', 'g protein')}
+    ${chart('Fiber by day', 'fiber_g', tg.fiber_g, 'var(--amber)', 'g fiber')}
+    ${hideCal() ? '' : chart('Calories by day', 'calories', tg.calories_max || tg.calories_min, 'var(--ink-3)', 'cal')}
+    ${hungerHtml(meals, checkins)}
     <section class="panel">
-      <h2>Hunger & movement</h2>
+      <h2>Movement</h2>
       <div class="stat-row">
-        <div class="stat"><div class="v">${hungerAvg}</div><div class="l">avg hunger (1–5)</div></div>
-        <div class="stat"><div class="v">${hungerDays.length}</div><div class="l">days with check-ins</div></div>
-        <div class="stat"><div class="v">${workouts.length}</div><div class="l">workouts</div></div>
+        <div class="stat"><div class="v">${recentWorkouts}</div><div class="l">workouts, 14 days</div></div>
+        <div class="stat"><div class="v">${r(recentWorkouts / 2)}</div><div class="l">per week</div></div>
+        <div class="stat"><div class="v">${perDay.filter((d) => d.workouts).length}</div><div class="l">active days</div></div>
       </div>
-      <p class="sub" style="margin-top:12px">Ask the coach "what makes me hungriest?" for the patterns behind these.</p>
     </section>
     ${weightHtml}`;
+
   const w = $('#wchart');
   if (w) w.addEventListener('click', () => w.classList.toggle('revealed'));
+  // Tap a bar (or heat-map cell) to read its exact value.
+  el.querySelectorAll('[data-tip]').forEach((t) => t.addEventListener('click', () => {
+    const panel = t.closest('.panel');
+    panel.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
+    (t.dataset.bar ? panel.querySelector(`#${t.dataset.bar}`) : t)?.classList.add('sel');
+    panel.querySelector('.readout').innerHTML = t.dataset.tip;
+  }));
 }
 
-function barChart(perDay, key, target, color) {
-  const W = 340, H = 140, pad = 22, bw = (W - pad) / perDay.length;
+function shortDate(d) {
+  return new Date(`${d}T12:00:00`).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+let chartSeq = 0;
+function barChart(perDay, key, target, color, unit) {
+  const W = 340, H = 140, pad = 26, bw = (W - pad) / perDay.length;
   const max = Math.max(target || 0, ...perDay.map((d) => d[key])) * 1.15 || 10;
   const y = (v) => H - 18 - (v / max) * (H - 30);
+  const fmtV = (v) => (key === 'calories' ? `~${rc(v)}` : r(v));
   const bars = perDay.map((d, i) => {
-    if (!d.logged) return '';
-    const x = pad + i * bw + 2;
-    return `<rect x="${x}" y="${y(d[key])}" width="${bw - 4}" height="${H - 18 - y(d[key])}" rx="3" fill="${color}"/>`;
+    const x = pad + i * bw;
+    const id = `b${++chartSeq}`;
+    const tip = d.logged ? `<b>${shortDate(d.day)}:</b> ${fmtV(d[key])} ${unit}${target ? ` · target ${fmtV(target)}` : ''}` : `<b>${shortDate(d.day)}:</b> nothing logged`;
+    const bar = d.logged ? `<rect id="${id}" class="bar" x="${x + 2}" y="${y(d[key])}" width="${bw - 4}" height="${H - 18 - y(d[key])}" rx="3" fill="${color}"/>` : '';
+    return `${bar}<rect class="hit" data-tip="${esc(tip)}" data-bar="${d.logged ? id : ''}" x="${x}" y="0" width="${bw}" height="${H - 14}"/>`;
   }).join('');
   const labels = perDay.map((d, i) => (i % 2 === 1 ? `<text x="${pad + i * bw + bw / 2}" y="${H - 4}" text-anchor="middle">${Number(d.day.slice(8))}</text>` : '')).join('');
-  const tline = target ? `<line x1="${pad}" x2="${W}" y1="${y(target)}" y2="${y(target)}" stroke="var(--ink-3)" stroke-dasharray="4 4"/><text x="0" y="${y(target) + 3}">${r(target)}</text>` : '';
+  const tline = target ? `<line x1="${pad}" x2="${W}" y1="${y(target)}" y2="${y(target)}" stroke="var(--ink-3)" stroke-dasharray="4 4"/><text x="0" y="${y(target) + 3}">${key === 'calories' ? rc(target) : r(target)}</text>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${key} per day">${tline}${bars}${labels}</svg>`;
+}
+
+// ---------- Hunger insights ----------
+function hungerHtml(meals, checkins) {
+  const grid = hungerHeatmap(checkins, TZ);
+  const cells = grid.flat();
+  const max = Math.max(1, ...cells.map((c) => c.score));
+  const total = cells.reduce((a, c) => a + c.count, 0);
+  let heat;
+  if (total < 3) {
+    heat = `<p class="muted">Tell the coach when you're hungry — even if you don't eat. After a week or two, your hungriest times show up here.</p>`;
+  } else {
+    const head = `<span></span>${BUCKETS.map((b, i) => `<span class="h">${i % 2 === 0 ? b.label : ''}</span>`).join('')}`;
+    const body = WEEKDAYS.map((wd, di) => `<span class="d">${wd}</span>${grid[di].map((c, bi) => {
+      const a = c.score ? 0.18 + 0.82 * (c.score / max) : 0;
+      const tip = `<b>${wd} ${bucketRange(bi)}:</b> ${c.count ? `hungry ${c.count}×` : 'no hunger logged'}`;
+      return `<button type="button" class="c" data-tip="${esc(tip)}" aria-label="${esc(tip.replace(/<[^>]+>/g, ''))}" style="${a ? `background:color-mix(in srgb, var(--warm) ${Math.round(a * 100)}%, var(--surface-2))` : ''}"></button>`;
+    }).join('')}`).join('');
+    heat = `<div class="readout">Tap a square for details</div><div class="heat">${head}${body}</div>
+      <div class="heat-key">Less <i style="background:var(--surface-2)"></i><i style="background:color-mix(in srgb, var(--warm) 45%, var(--surface-2))"></i><i style="background:var(--warm)"></i> More hunger · last 4 weeks</div>`;
+  }
+
+  const spots = weakSpots(meals, TZ);
+  const spotsHtml = spots.length
+    ? `<ul class="insight-list">${spots.map((w) => `<li><b>${esc(w.days)} ${esc(w.label)}</b><span class="sub2">${w.count} ultraprocessed snacks · ${esc(w.examples.join(', '))}</span></li>`).join('')}</ul>`
+    : '<p class="muted">No pattern yet. When ultraprocessed snacks cluster at a certain time, it shows up here.</p>';
+
+  const full = keepsYouFull(meals, checkins);
+  let fullHtml;
+  if (full.length < 2) {
+    fullHtml = '<p class="muted">Needs a few repeats: log meals and when hunger hits, and this ranks foods by how long they hold you.</p>';
+  } else {
+    // Split the ranking in half: top half "holds you", bottom half "hungry again soonest".
+    const half = Math.ceil(full.length / 2);
+    const top = full.slice(0, Math.min(4, half));
+    const bottom = full.slice(half).slice(-3).reverse();
+    const row = (x, short) => `<div class="full-row ${short ? 'short' : ''}"><span>${esc(x.food)}</span><div class="bar"><div class="fill" style="width:${(x.avgHours / 6) * 100}%"></div></div><span class="hrs">${x.avgHours.toFixed(1)} h</span></div>`;
+    fullHtml = `<div class="full-head">Holds you longest</div>${top.map((x) => row(x, false)).join('')}
+      ${bottom.length ? `<div class="full-head">Hungry again soonest</div>${bottom.map((x) => row(x, true)).join('')}` : ''}
+      <p class="sub" style="margin-top:8px">Average hours until the next hunger or snack, same day. Foods seen 2+ times.</p>`;
+  }
+
+  return `
+    <section class="panel"><h2>When hunger hits</h2>${heat}</section>
+    <section class="panel"><h2>Weak spots</h2><p class="sub">When ultraprocessed snacks tend to happen</p>${spotsHtml}</section>
+    <section class="panel"><h2>What keeps you full</h2>${fullHtml}</section>`;
 }
 
 function movingAvg(weights) {
@@ -482,8 +659,10 @@ function renderSettings() {
       </div>
       <div class="field"><label>Allergies</label><input type="text" id="allergies" value="${esc(list(p.allergies))}" placeholder="e.g. shellfish, peanuts"></div>
       <div class="field"><label>Foods you dislike</label><input type="text" id="dislikes" value="${esc(list(p.dislikes))}"></div>
-      <div class="field"><label>Usually in the house</label><input type="text" id="staples" value="${esc(list(p.staples))}" placeholder="e.g. eggs, Greek yogurt, apples"><span class="hint">The coach builds suggestions from these.</span></div>
+      <div class="field"><label>Usually in the house</label><textarea id="staples" rows="3" placeholder="e.g. eggs, Greek yogurt, apples">${esc(list(state.household ? state.household.pantry : p.staples))}</textarea><span class="hint">${state.household ? `Shared pantry with ${esc(otherNames().join(', ') || 'your household')}. ` : ''}The coach builds suggestions from these.</span></div>
     </section>
+
+    ${householdHtml()}
 
     <section class="panel">
       <h2>Daily targets</h2>
@@ -504,6 +683,11 @@ function renderSettings() {
     </div>
 
     <section class="panel">
+      <h2>About the numbers</h2>
+      <p class="disclaimer">Food Coach gives estimates, not measurements. Numbers come from your description, a photo or a label, and even packaged-food labels can legally be off by 20%. Estimates are built to be consistent, so the patterns hold up: what keeps you full, where the gaps are, how your week is trending. The more specific you are (amounts, brands, how it was cooked), the closer they get. Tap "Breakdown" on any meal to see what the coach assumed. This isn't medical advice; talk to a doctor or dietitian about medical conditions.</p>
+    </section>
+
+    <section class="panel">
       <h2>Your data</h2>
       <div class="btn-row">
         <button class="btn small" id="export">Export log (CSV)</button>
@@ -513,6 +697,7 @@ function renderSettings() {
       <p class="sub" style="margin-top:12px">Install: in Safari tap Share → Add to Home Screen.</p>
     </section>`;
 
+  bindHousehold();
   $('#restr').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (b) b.classList.toggle('on');
@@ -535,7 +720,7 @@ async function saveSettings() {
     restrictions,
     allergies: split('#allergies'),
     dislikes: split('#dislikes'),
-    staples: split('#staples'),
+    ...(state.household ? {} : { staples: split('#staples') }),
     hide_calories: $('#hide-cal').checked,
     track_weight: $('#track-weight').checked,
     targets: {
@@ -547,8 +732,74 @@ async function saveSettings() {
     },
   };
   await setDoc(doc(db, 'users', state.user.uid), patch, { merge: true });
+  if (state.household) await updateDoc(doc(db, 'households', state.household.id), { pantry: split('#staples') });
   $('#saved-note').hidden = false;
   setTimeout(() => { const n = $('#saved-note'); if (n) n.hidden = true; }, 2000);
+}
+
+function otherNames() {
+  const h = state.household;
+  if (!h) return [];
+  return (h.members || []).filter((m) => m !== state.user.uid).map((m) => (h.names || {})[m] || 'Member');
+}
+
+function householdHtml() {
+  const h = state.household;
+  const invite = state.invite ? `
+    <div class="field" style="margin-top:10px"><label>Invite code · good for 3 days, one use</label>
+      <div class="code">${esc(state.invite)}</div>
+      <div class="btn-row"><button class="btn small" id="hh-share">Share code</button></div>
+    </div>` : '';
+  if (h) {
+    const names = (h.members || []).map((m) => (h.names || {})[m] || 'Member');
+    return `<section class="panel">
+      <h2>Household</h2>
+      <p class="sub">${esc(names.join(' · '))}</p>
+      <p class="disclaimer">You share a pantry, and meals you eat together get the same numbers. Say "${esc(otherNames()[0] || 'Alexa')} and I both had…" and the coach logs it for both of you. Your weight, hunger, targets and chat stay private.</p>
+      <div class="btn-row" style="margin-top:10px">
+        <button class="btn small" id="hh-invite">Invite someone else</button>
+        <button class="btn small danger" id="hh-leave">Leave household</button>
+      </div>${invite}
+      <div id="hh-error" class="error-inline" hidden></div>
+    </section>`;
+  }
+  return `<section class="panel">
+    <h2>Household</h2>
+    <p class="disclaimer">Link with your partner or family to share a pantry and log meals you ate together for both of you. Your weight, hunger, targets and chat stay private.</p>
+    <div class="btn-row" style="margin-top:10px"><button class="btn small" id="hh-invite">Invite someone</button></div>
+    ${invite}
+    <div class="field" style="margin-top:14px"><label>Have a code?</label>
+      <div class="row-input"><input type="text" id="hh-code" placeholder="6-letter code" autocapitalize="characters" maxlength="8"><button class="btn small" id="hh-join">Join</button></div>
+    </div>
+    <div id="hh-error" class="error-inline" hidden></div>
+  </section>`;
+}
+
+function bindHousehold() {
+  const err = (m) => { const e = $('#hh-error'); if (e) { e.textContent = m; e.hidden = !m; } };
+  const busy = (btn, on) => { if (btn) { btn.disabled = on; } };
+  $('#hh-invite')?.addEventListener('click', async (ev) => {
+    busy(ev.target, true); err('');
+    try { state.invite = (await api('household', { action: 'invite' })).code; renderSettings(); }
+    catch (e) { err(e.message); busy(ev.target, false); }
+  });
+  $('#hh-share')?.addEventListener('click', async () => {
+    const text = `Join my household in Food Coach: open food-coach.netlify.app, go to the You tab, and enter code ${state.invite}`;
+    try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); err('Copied — paste it in a text.'); } } catch { /* cancelled */ }
+  });
+  $('#hh-join')?.addEventListener('click', async (ev) => {
+    const code = $('#hh-code').value.trim();
+    if (!code) return;
+    busy(ev.target, true); err('');
+    try { await api('household', { action: 'join', code }); state.invite = null; }
+    catch (e) { err(e.message); busy(ev.target, false); }
+  });
+  $('#hh-leave')?.addEventListener('click', async (ev) => {
+    if (!confirm('Leave this household? Your own log stays with you.')) return;
+    busy(ev.target, true);
+    try { await api('household', { action: 'leave' }); state.invite = null; }
+    catch (e) { err(e.message); busy(ev.target, false); }
+  });
 }
 
 async function exportCsv() {

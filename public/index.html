@@ -44,14 +44,23 @@
       <div id="thread" class="thread" aria-live="polite"></div>
       <div class="composer-wrap">
         <div id="chips" class="chips">
-          <button data-fill="Breakfast: ">Log breakfast</button>
+          <button data-fill="I had ">Log meal</button>
           <button data-send="I'm hungry — what should I eat right now?">I'm hungry</button>
           <button data-fill="Workout: ">Log workout</button>
           <button data-send="How am I doing today?">How's today?</button>
           <button data-fill="Weighed in at " class="weight-only">Weigh in</button>
         </div>
+        <div id="photo-preview" class="photo-preview" hidden>
+          <img id="photo-img" alt="Photo to send">
+          <span class="muted">Add a note if you like (“I ate half”)</span>
+          <button type="button" id="photo-remove" class="photo-remove" aria-label="Remove photo">×</button>
+        </div>
         <form id="composer" class="composer" autocomplete="off">
-          <textarea id="input" rows="1" placeholder="What did you eat? How was your workout?" aria-label="Message"></textarea>
+          <label class="photo-btn" aria-label="Add a photo">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            <input id="photo-input" type="file" accept="image/*" hidden>
+          </label>
+          <textarea id="input" rows="1" placeholder="What did you eat?" aria-label="Message"></textarea>
           <button id="send" class="send" type="submit" aria-label="Send">
             <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l15-7-5 15-3-6-7-2z" fill="currentColor"/></svg>
           </button>
