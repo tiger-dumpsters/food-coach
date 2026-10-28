@@ -21,6 +21,12 @@ How you work:
 - Answer questions using their real numbers from the context. Be concrete.
 - Where the input was vague (butter "on" toast, a "bowl", homemade bread), fill in the meal's assumptions field with what you assumed. If one item swings the total a lot (oil, butter, dressing, a big unknown portion), ask about that one item in your reply — briefly, after logging.
 
+Processing level: rate every item on its own — never the meal as a whole.
+- whole: fruit, vegetables, eggs, plain meat/fish/poultry, plain milk and plain yogurt (Greek included), dried or plain canned beans, nuts, seeds, oats, rice, potatoes, coffee, tea, water, homemade food made from these.
+- processed: simple foods with a few added ingredients — cheese, butter, oils, homemade or bakery bread, plain canned fish, salted nuts, simple broths and soups with a short ingredient list, natural peanut butter.
+- ultraprocessed: industrial products with additives — packaged snacks and chips, cookies, most granola and cereal bars, frozen waffles, sweetened/flavored yogurt, American cheese, deli meats, sodas, protein bars and shakes, most packaged sliced bread, sweetened coffee syrups.
+- The app works out each meal's split from the items. When it helps, name the one or two processed items worth swapping.
+
 Photos: a message starting [photo] came with a picture.
 - A plate or meal: identify each food and estimate portions from what you can see (plate size, utensils, packaging). Log it with items and put your portion guesses in assumptions. Say in one line what you saw so they can correct you. If the caption says they ate part of it, scale.
 - A nutrition label: use the label's numbers per serving, scaled to what they say they had.
@@ -53,12 +59,17 @@ const ONBOARDING = `This user has not finished setup. Run onboarding as a friend
 7. Then propose targets as ranges — protein floor, fiber (25–38 g is typical), healthy fats, and a calorie range — and ask if they'd rather not see calories at all.
 Save what you learn with save_profile as you go. When they accept the targets, save_profile with onboarded=true and tell them they can just start telling you what they eat, or send a photo. In that same message, in one sentence: the numbers are estimates built for spotting patterns, and the more specific they are (amounts, brands, how it was cooked) the closer they get. Keep the whole thing to a few minutes.`;
 
+function mixText(mix) {
+  const total = Object.values(mix).reduce((a, b) => a + b, 0) || 1;
+  return Object.entries(mix).filter(([, v]) => v).map(([k, v]) => `${Math.round((v / total) * 100)}% ${k}`).join(' / ');
+}
+
 function fmt(n) {
   return n == null ? '?' : Math.round(n);
 }
 
 function mealLine(m) {
-  return `- meal id=${m.id} at ${m.localTime || '?'} ${m.meal || ''}: ${m.description} | ${fmt(m.calories)} cal, P ${fmt(m.protein_g)} g, F(fiber) ${fmt(m.fiber_g)} g, fat ${fmt(m.fat_g)} g, ${m.processing || ''}`;
+  return `- meal id=${m.id} at ${m.localTime || '?'} ${m.meal || ''}: ${m.description} | ${fmt(m.calories)} cal, P ${fmt(m.protein_g)} g, F(fiber) ${fmt(m.fiber_g)} g, fat ${fmt(m.fat_g)} g, ${m.processing_mix ? mixText(m.processing_mix) : (m.processing || '')}`;
 }
 
 export function totals(meals) {
@@ -68,7 +79,7 @@ export function totals(meals) {
     t.protein_g += m.protein_g || 0;
     t.fiber_g += m.fiber_g || 0;
     t.fat_g += m.fat_g || 0;
-    if (m.processing === 'ultraprocessed') t.ultraprocessed += 1;
+    if (m.processing === 'ultraprocessed' || m.processing_mix?.ultraprocessed) t.ultraprocessed += 1;
   }
   return t;
 }
@@ -81,7 +92,7 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
   lines.push(`Now: ${clock.weekday} ${clock.day}, ${clock.hhmm} local (${clock.tz}).`);
   lines.push(`Profile: ${JSON.stringify(profileForPrompt(profile))}`);
 
-  lines.push(`\nToday so far: ${fmt(t.calories)} cal, ${fmt(t.protein_g)} g protein, ${fmt(t.fiber_g)} g fiber, ${fmt(t.fat_g)} g fat, ${t.ultraprocessed} ultraprocessed item(s).`);
+  lines.push(`\nToday so far: ${fmt(t.calories)} cal, ${fmt(t.protein_g)} g protein, ${fmt(t.fiber_g)} g fiber, ${fmt(t.fat_g)} g fat, ${t.ultraprocessed} meal(s) with ultraprocessed items.`);
   if (today.meals.length) lines.push('Meals today:\n' + today.meals.map(mealLine).join('\n'));
   if (today.workouts.length) lines.push('Workouts today:\n' + today.workouts.map(w => `- workout id=${w.id} ${w.type} ${w.duration_min ? w.duration_min + ' min' : ''} ${w.distance ? w.distance + ' ' + (w.distance_unit || '') : ''} ${w.effort || ''}`).join('\n'));
   if (today.checkins.length) lines.push('Hunger check-ins today:\n' + today.checkins.map(c => `- hunger id=${c.id} level ${c.level} at ${c.localTime || '?'} ${c.note || ''}`).join('\n'));

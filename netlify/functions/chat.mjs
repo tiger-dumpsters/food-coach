@@ -348,7 +348,7 @@ export function foodLibrary(meals, max = 60) {
   const sorted = [...meals].sort((a, b) => (b.at || 0) - (a.at || 0));
   for (const m of sorted) {
     for (const it of m.items || []) {
-      if (typeof it.calories !== 'number') continue;
+      if (typeof it.calories !== 'number' || it.derived) continue; // re-rated items have no reliable macros
       const key = `${foodKey(it.name)}|${String(it.qty || '').toLowerCase().trim()}`;
       if (!seen.has(key)) seen.set(key, { ...it, uses: 0 });
       seen.get(key).uses += 1;

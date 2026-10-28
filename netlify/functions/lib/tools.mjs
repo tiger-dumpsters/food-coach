@@ -34,8 +34,13 @@ const mealFields = {
         fiber_g: { type: 'number' },
         fat_g: { type: 'number' },
         carbs_g: { type: 'number' },
+        processing: {
+          type: 'string',
+          enum: ['whole', 'processed', 'ultraprocessed'],
+          description: 'This item on its own: whole (unprocessed or minimally processed), processed, or ultraprocessed.',
+        },
       },
-      required: ['name', 'qty', 'calories', 'protein_g', 'fiber_g'],
+      required: ['name', 'qty', 'calories', 'protein_g', 'fiber_g', 'processing'],
     },
   },
   calories: { type: 'number' },
@@ -45,8 +50,8 @@ const mealFields = {
   carbs_g: { type: 'number' },
   processing: {
     type: 'string',
-    enum: ['whole', 'processed', 'ultraprocessed', 'mixed'],
-    description: 'Overall processing level of the meal (NOVA-style).',
+    enum: ['whole', 'processed', 'ultraprocessed'],
+    description: 'Only for a single food logged without items. Otherwise it is worked out from the items.',
   },
   confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
   assumptions: {
@@ -73,7 +78,7 @@ export const TOOLS = [
           description: 'Portion for the people in shared_with relative to the user, e.g. 0.75 if they had less. Default 1.',
         },
       },
-      required: ['description', 'items', 'processing'],
+      required: ['description', 'items'],
     },
   },
   {
@@ -239,7 +244,29 @@ export function withItemTotals(input) {
   const out = { ...input, calories: Math.round(sum('calories')), protein_g: sum('protein_g'), fiber_g: sum('fiber_g') };
   if (items.some(i => typeof i.fat_g === 'number')) out.fat_g = sum('fat_g');
   if (items.some(i => typeof i.carbs_g === 'number')) out.carbs_g = sum('carbs_g');
+  const mix = processingMix(items);
+  if (mix) {
+    out.processing_mix = mix;
+    out.processing = dominant(mix);
+  }
   return out;
+}
+
+export const LEVELS = ['whole', 'processed', 'ultraprocessed'];
+
+// Calories from each processing level. Zero-calorie items (black coffee, water) count as 1
+// so a meal of only those still gets a level.
+export function processingMix(items) {
+  const rated = items.filter((i) => LEVELS.includes(i.processing));
+  if (!rated.length) return null;
+  const mix = { whole: 0, processed: 0, ultraprocessed: 0 };
+  for (const i of rated) mix[i.processing] += Math.max(1, Number(i.calories) || 0);
+  return mix;
+}
+
+// The level with the most calories; ties go to the more processed level.
+export function dominant(mix) {
+  return [...LEVELS].reverse().reduce((best, k) => (mix[k] > mix[best] ? k : best), 'ultraprocessed');
 }
 
 // Normalized key for matching the same food across meals.

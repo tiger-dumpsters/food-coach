@@ -282,3 +282,26 @@ test('photo: image goes to the smart model, thumb saved, history marks it', asyn
   await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
   assert.ok(JSON.stringify(calls.at(-1).messages).includes('[photo] breakfast'));
 });
+
+test('rerate: older meals get a split without changing totals, once', async () => {
+  const { default: rerate, applyRating } = await import('../netlify/functions/rerate.mjs');
+  const p = applyRating({ calories: 290, description: 'yogurt, strawberries, granola' }, { items: [
+    { name: 'Greek yogurt', share: 0.65, processing: 'whole' }, { name: 'strawberries', share: 0.05, processing: 'whole' }, { name: 'granola', share: 0.3, processing: 'ultraprocessed' }] });
+  assert.equal(p.items.reduce((a, i) => a + i.calories, 0), 290);
+  assert.equal(p.processing, 'whole');
+  assert.ok(p.items.every((i) => i.derived));
+
+  store.set('users/u1/meals/old1', { day: new Date().toISOString().slice(0, 10), description: 'yogurt bowl', calories: 290, protein_g: 27, processing: 'mixed' });
+  queue.push({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'r', name: 'rate_meals', input: { meals: [{ id: 'old1', items: [
+    { name: 'Greek yogurt', share: 0.7, processing: 'whole' }, { name: 'granola', share: 0.3, processing: 'ultraprocessed' }] }] } }] });
+  const before = calls.length;
+  const r = await (await rerate(new Request('http://x', { method: 'POST', headers: { authorization: 'Bearer good' }, body: '{}' }))).json();
+  assert.ok(r.updated >= 1);
+  const m = store.get('users/u1/meals/old1');
+  assert.equal(m.calories, 290);
+  assert.equal(m.protein_g, 27);
+  assert.deepEqual(m.processing_mix, { whole: 203, processed: 0, ultraprocessed: 87 });
+  const again = await (await rerate(new Request('http://x', { method: 'POST', headers: { authorization: 'Bearer good' }, body: '{}' }))).json();
+  assert.equal(again.already, true);
+  assert.equal(calls.length, before + 1);
+});

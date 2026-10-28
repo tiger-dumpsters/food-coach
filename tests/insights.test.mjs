@@ -35,3 +35,20 @@ test('keeps-you-full ranks smoothie below eggs', () => {
   assert.equal(by.eggs, 5);
   assert.ok(r.findIndex((x) => x.food === 'eggs') < r.findIndex((x) => x.food === 'smoothie'));
 });
+
+test('meal processing comes from items, weighted by calories', async () => {
+  const { withItemTotals } = await import('../netlify/functions/lib/tools.mjs');
+  const m = withItemTotals({ description: 'yogurt bowl', items: [
+    { name: 'Greek yogurt', qty: '1 cup', calories: 190, protein_g: 20, fiber_g: 0, processing: 'whole' },
+    { name: 'strawberries', qty: '3', calories: 15, protein_g: 0, fiber_g: 1, processing: 'whole' },
+    { name: 'Kind granola', qty: 'small handful', calories: 85, protein_g: 2, fiber_g: 2, processing: 'ultraprocessed' },
+  ] });
+  assert.deepEqual(m.processing_mix, { whole: 205, processed: 0, ultraprocessed: 85 });
+  assert.equal(m.processing, 'whole');
+  const coffee = withItemTotals({ items: [{ name: 'black coffee', qty: '2 cups', calories: 0, protein_g: 0, fiber_g: 0, processing: 'whole' }] });
+  assert.equal(coffee.processing, 'whole');
+  const tie = withItemTotals({ items: [
+    { name: 'a', qty: '1', calories: 100, protein_g: 0, fiber_g: 0, processing: 'whole' },
+    { name: 'b', qty: '1', calories: 100, protein_g: 0, fiber_g: 0, processing: 'ultraprocessed' }] });
+  assert.equal(tie.processing, 'ultraprocessed');
+});

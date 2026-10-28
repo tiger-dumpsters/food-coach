@@ -58,6 +58,27 @@ function r(n) { return n == null ? '–' : Math.round(n); }
 // Calories rounded to the nearest 10: estimates shouldn't look more precise than they are.
 function rc(n) { return n == null ? '–' : (Math.round(n / 10) * 10).toLocaleString(); }
 function hideCal() { return !!state.profile?.hide_calories; }
+const LEVELS = ['whole', 'processed', 'ultraprocessed'];
+const LEVEL_LABEL = { whole: 'whole', processed: 'processed', ultraprocessed: 'ultraprocessed', unrated: 'older entries' };
+// Calories by processing level for one meal. Older meals rated as a whole fall back to that rating.
+function mealMix(m) {
+  if (m.processing_mix) return m.processing_mix;
+  const k = LEVELS.includes(m.processing) ? m.processing : 'unrated';
+  return { [k]: Math.max(1, m.calories || 0) };
+}
+function pct(mix) {
+  const total = Object.values(mix).reduce((a, b) => a + b, 0) || 1;
+  return Object.fromEntries(Object.entries(mix).map(([k, v]) => [k, Math.round((v / total) * 100)]));
+}
+function splitBar(mix, cls = 'split') {
+  const p = pct(mix);
+  return `<span class="${cls}">${[...LEVELS, 'unrated'].filter((k) => p[k]).map((k) => `<i style="width:${p[k]}%;background:${MIX_COLORS[k]}"></i>`).join('')}</span>`;
+}
+function splitText(mix) {
+  const p = pct(mix);
+  return [...LEVELS, 'unrated'].filter((k) => p[k]).map((k) => `${p[k]}% ${k === 'ultraprocessed' ? 'ultra' : LEVEL_LABEL[k]}`).join(' · ');
+}
+
 function rows(snap) { return snap.docs.map((d) => ({ id: d.id, ...d.data() })); }
 
 // Minimal formatting for coach replies: **bold** and line breaks only.
@@ -99,6 +120,11 @@ function startSession(user) {
     state.profile = snap.exists() ? snap.data() : null;
     document.querySelectorAll('.weight-only').forEach((el) => { el.hidden = !state.profile?.track_weight; });
     watchHousehold(state.profile?.householdId || null);
+    // One-time: give older meals a per-item whole/processed split (runs in the background).
+    if (state.profile?.onboarded && state.profile.rerated !== 'v1' && !state.rerateStarted) {
+      state.rerateStarted = true;
+      api('rerate', {}).catch(() => { state.rerateStarted = false; });
+    }
     renderThread();
     if (state.view === 'today') renderToday();
     if (state.view === 'settings') renderSettings();
@@ -349,9 +375,9 @@ function cardHtml(e) {
       e.fat_g != null ? `${r(e.fat_g)} g fat` : '',
     ].filter(Boolean).map((n) => `<span>${n}</span>`).join('');
     const items = (e.items || []).filter((it) => it && it.name);
-    const details = items.length > 1 || e.assumptions ? `
+    const details = items.length > 1 || e.assumptions || items.some((it) => it.processing) ? `
       <details><summary>Breakdown${e.assumptions ? ' & assumptions' : ''}</summary>
-        ${items.length ? `<ul class="items">${items.map((it) => `<li><span>${esc(it.qty ? `${it.qty} ` : '')}${esc(it.name)}</span><span>${hideCal() ? '' : `${rc(it.calories)} cal · `}${r(it.protein_g)}p · ${r(it.fiber_g)}f</span></li>`).join('')}</ul>` : ''}
+        ${items.length ? `<ul class="items">${items.map((it) => `<li><span>${it.processing ? `<i class="dot" style="background:${MIX_COLORS[it.processing]}" title="${esc(it.processing)}"></i>` : ''}${esc(it.qty ? `${it.qty} ` : '')}${esc(it.name)}</span><span>${hideCal() ? '' : `${rc(it.calories)} cal · `}${r(it.protein_g)}p · ${r(it.fiber_g)}f</span></li>`).join('')}</ul>` : ''}
         ${e.assumptions ? `<div class="assume">Assumed: ${esc(e.assumptions)}</div>` : ''}
       </details>` : '';
     const share = e.sharedWith?.length ? `<span class="share">Also logged for ${esc(e.sharedWith.join(', '))}</span>`
@@ -359,7 +385,9 @@ function cardHtml(e) {
     return `<div class="card meal">
       <span class="k">${e.updated ? 'Updated ' : ''}${esc(e.meal || 'Food')}${e.day && e.day !== localDay() ? ' · ' + esc(dayLabel(e.day)) : ''}${e.at ? ' · ' + esc(hhmm(new Date(e.at))) : ''}</span>
       <span class="title">${esc(e.description)}</span>
-      <span class="nums">${nums}${e.processing ? `<span class="tag ${esc(e.processing)}">${esc(e.processing)}</span>` : ''}</span>
+      <span class="nums">${nums}</span>
+      ${e.processing_mix ? `<span class="split-row">${splitBar(e.processing_mix)}<span>${esc(splitText(e.processing_mix))}</span></span>`
+        : e.processing ? `<span class="nums"><span class="tag ${esc(e.processing)}">${esc(e.processing)}</span></span>` : ''}
       ${share}${details}
     </div>`;
   }
@@ -411,7 +439,11 @@ function renderToday() {
   if (meals.length) {
     if (tg.protein_g && t.protein_g < tg.protein_g * (nowH < 14 ? 0.3 : 0.6)) gaps.push(`Protein's running low — about ${r(tg.protein_g - t.protein_g)} g to go.`);
     if (tg.fiber_g && t.fiber_g < tg.fiber_g * (nowH < 14 ? 0.25 : 0.5)) gaps.push(`Fiber's light so far — beans, berries, veggies or whole grains would help.`);
-    if (t.upf >= 2) gaps.push(`${t.upf} ultraprocessed items today — maybe make the next one whole food.`);
+    const dayMix = {};
+    for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) dayMix[k] = (dayMix[k] || 0) + v;
+    const upfPct = pct(dayMix).ultraprocessed || 0;
+    const upfItems = [...new Set(meals.flatMap((m) => (m.items || []).filter((it) => it.processing === 'ultraprocessed').map((it) => it.name)))];
+    if (upfPct >= 25) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
   }
   const gapHtml = meals.length
     ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li>${esc(g)}</li>`).join('') : '<li class="ok">Nothing flagged — nicely balanced so far.</li>'}</ul>`
@@ -421,14 +453,17 @@ function renderToday() {
 
   const f = state.mixFilter;
   const log = [
-    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, proc: m.processing || 'mixed', n: [hideCal() ? '' : `${rc(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
+    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, mix: mealMix(m), items: m.items || [], n: [hideCal() ? '' : `${rc(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
     ...workouts.map((w) => ({ at: toDate(w.at), label: `Workout: ${w.type}`, n: w.duration_min ? `${r(w.duration_min)} min` : '' })),
     ...checkins.map((c) => ({ at: toDate(c.at), label: `Hunger ${c.level}/5${c.note ? ' — ' + c.note : ''}`, n: '' })),
   ].sort((a, b) => (a.at || 0) - (b.at || 0));
   const logRow = (x) => {
-    const cls = f ? (x.proc === f ? `hl ${f}` : 'dim') : '';
-    const tag = x.proc === 'ultraprocessed' || x.proc === 'processed' ? `<span class="tag ${x.proc}">${x.proc}</span>` : '';
-    return `<li class="${cls}"><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}${tag}</span><span class="n">${esc(x.n)}</span></li>`;
+    const has = x.mix && x.mix[f] > 0;
+    const cls = f ? (has ? `hl ${f}` : 'dim') : '';
+    const matching = f && has ? x.items.filter((it) => it.processing === f).map((it) => it.name) : [];
+    const split = x.mix && Object.keys(x.mix).length ? splitBar(x.mix, 'split mini') : '';
+    const which = matching.length ? `<span class="which">${esc(LEVEL_LABEL[f])}: ${esc(matching.join(', '))}</span>` : '';
+    return `<li class="${cls}"><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}${split}${which}</span><span class="n">${esc(x.n)}</span></li>`;
   };
 
   el.innerHTML = `
@@ -460,17 +495,17 @@ function sum(meals) {
   return t;
 }
 
-const MIX_COLORS = { whole: 'var(--accent)', processed: 'var(--amber)', mixed: 'var(--ink-3)', ultraprocessed: 'var(--warm)' };
+const MIX_COLORS = { whole: 'var(--accent)', processed: 'var(--amber)', ultraprocessed: 'var(--warm)', unrated: 'var(--ink-3)', mixed: 'var(--ink-3)' };
 function mixHtml(meals) {
   if (!meals.length) return '<p class="muted">Shows up once you log food.</p>';
-  const c = { whole: 0, processed: 0, mixed: 0, ultraprocessed: 0 };
-  meals.forEach((m) => { c[m.processing || 'mixed'] = (c[m.processing || 'mixed'] || 0) + 1; });
-  const n = meals.length;
+  const c = {};
+  for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) c[k] = (c[k] || 0) + v;
+  const p = pct(c);
   const f = state.mixFilter;
-  const parts = Object.entries(c).filter(([, v]) => v);
-  const bar = parts.map(([k, v]) => `<span data-mix="${k}" class="${f && f !== k ? 'dim' : ''}" style="width:${(v / n) * 100}%;background:${MIX_COLORS[k]}" title="${k}"></span>`).join('');
-  const leg = parts.map(([k, v]) => `<button type="button" data-mix="${k}" class="${f === k ? 'on' : ''}"><i style="background:${MIX_COLORS[k]}"></i>${k} ${v}</button>`).join('');
-  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${f} foods in the log below · tap again to clear` : 'Tap a color to see which foods it is'}</div>`;
+  const parts = [...LEVELS, 'unrated'].filter((k) => p[k]);
+  const bar = parts.map((k) => `<span data-mix="${k}" class="${f && f !== k ? 'dim' : ''}" style="width:${p[k]}%;background:${MIX_COLORS[k]}" title="${LEVEL_LABEL[k]}"></span>`).join('');
+  const leg = parts.map((k) => `<button type="button" data-mix="${k}" class="${f === k ? 'on' : ''}"><i style="background:${MIX_COLORS[k]}"></i>${LEVEL_LABEL[k]} ${p[k]}%</button>`).join('');
+  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${LEVEL_LABEL[f]} foods in the log below · tap again to clear` : 'Share of today\'s calories · tap a color to see which foods'}</div>`;
 }
 
 // ---------- Trends ----------
@@ -499,8 +534,10 @@ async function renderTrends() {
   const logged = perDay.filter((d) => d.logged);
   const tg = state.profile?.targets || {};
   const avg = (k) => logged.length ? logged.reduce((a, d) => a + d[k], 0) / logged.length : 0;
-  const totalMeals = logged.reduce((a, d) => a + d.meals, 0);
-  const upfShare = totalMeals ? Math.round((logged.reduce((a, d) => a + d.upf, 0) / totalMeals) * 100) : 0;
+  const recentMeals = meals.filter((m) => m.day >= days[0]);
+  const calMix = {};
+  for (const m of recentMeals) for (const [k, v] of Object.entries(mealMix(m))) calMix[k] = (calMix[k] || 0) + v;
+  const upfShare = pct(calMix).ultraprocessed || 0;
   const recentWorkouts = workouts.filter((w) => w.day >= days[0]).length;
 
   let weightHtml = '';
@@ -521,7 +558,7 @@ async function renderTrends() {
       <div class="stat-row">
         <div class="stat"><div class="v">${r(avg('protein_g'))}<small> g</small></div><div class="l">avg protein</div></div>
         <div class="stat"><div class="v">${r(avg('fiber_g'))}<small> g</small></div><div class="l">avg fiber</div></div>
-        <div class="stat"><div class="v">${upfShare}%</div><div class="l">ultra-processed</div></div>
+        <div class="stat"><div class="v">${upfShare}%</div><div class="l">calories ultra-processed</div></div>
       </div>
     </section>
     ${chart('Protein by day', 'protein_g', tg.protein_g, 'var(--accent)', 'g protein')}

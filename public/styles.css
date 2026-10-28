@@ -308,3 +308,11 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .row-input input { flex: 1; }
 .disclaimer { font-size: 0.85rem; color: var(--ink-2); line-height: 1.5; }
 .error-inline { color: var(--warm); font-size: 0.85rem; margin-top: 6px; }
+
+/* ---------- Processing split ---------- */
+.split { display: inline-flex; height: 8px; border-radius: 999px; overflow: hidden; background: var(--surface); width: 72px; flex: none; }
+.split i { display: block; height: 100%; }
+.split-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--ink-2); }
+.split.mini { display: flex; width: 64px; height: 6px; margin-top: 5px; }
+.log-list .which { display: block; font-size: 0.78rem; color: var(--ink-2); margin-top: 3px; }
+.card .items .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
