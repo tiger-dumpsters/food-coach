@@ -104,7 +104,18 @@ export function claimsLogged(text) {
   return /\b(logged|i(?:'ve| have) added|added (?:it|that|them|your)|saved|recorded)\b/i.test(text || '');
 }
 
-function historyToMessages(history) {
+// "[Today 1:03 PM]" / "[Yesterday 5:19 PM]" / "[Mon Oct 26 8:02 AM]" so the coach knows
+// which day an earlier message (and any running total in it) belongs to.
+export function stamp(h, clock) {
+  const at = h.createdAt?.toDate ? h.createdAt.toDate() : h.createdAt ? new Date(h.createdAt) : null;
+  const day = h.day || clock.day;
+  const label = day === clock.day ? 'Today' : day === dayMinus(clock.day, 1) ? 'Yesterday'
+    : new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' });
+  const time = at ? new Intl.DateTimeFormat('en-US', { timeZone: clock.tz, hour: 'numeric', minute: '2-digit' }).format(at) : '';
+  return `${label}${time ? ` ${time}` : ''}`;
+}
+
+function historyToMessages(history, clock) {
   const out = [];
   for (const h of history) {
     const role = h.role === 'assistant' ? 'assistant' : 'user';
@@ -114,6 +125,10 @@ function historyToMessages(history) {
     // Earlier long pastes were already handled (or failed); don't let the model redo them.
     if (role === 'user' && text.length > LONG_PASTE) {
       text = `${text.slice(0, 200)}… [long pasted log from earlier, ${text.length} chars — already handled; do not log it again unless the user pastes it again]`;
+    }
+    if (clock) {
+      if (role === 'user') text = `[${stamp(h, clock)}] ${text}`;
+      else text += `\n[app: sent ${stamp(h, clock)}]`;
     }
     if (role === 'assistant') text += `\n${savedNote(h.entries)}`;
     const last = out.at(-1);
@@ -202,8 +217,9 @@ export default async (req) => {
   });
 
   const history = rows(histSnap, clock.tz).reverse();
-  const messages = [...historyToMessages(history)];
-  const turnText = image ? `[photo]${text ? ` ${text}` : ' (no caption)'}` : text;
+  const messages = [...historyToMessages(history, clock)];
+  const nowStamp = `[Today ${new Intl.DateTimeFormat('en-US', { timeZone: clock.tz, hour: 'numeric', minute: '2-digit' }).format(clock.now)}]`;
+  const turnText = `${nowStamp} ${image ? `[photo]${text ? ` ${text}` : ' (no caption)'}` : text}`;
   const userContent = image ? [image, { type: 'text', text: turnText }] : turnText;
   if (messages.length && messages.at(-1).role === 'user') {
     const prev = messages.pop().content;
@@ -288,6 +304,17 @@ export default async (req) => {
       // Keep cards in the order the user mentioned things.
       for (const o of outcomes) if (o.entry) entries.push(o.entry);
       const results = outcomes.map((o) => o.block);
+      // After any food change, give the coach today's real totals from the database so it
+      // never adds up the day itself (or carries over yesterday's running total).
+      if (outcomes.some((o) => o.entry && (o.entry.kind === 'meal'))) {
+        try {
+          const todaySnap = await userRef.collection('meals').where('day', '==', clock.day).get();
+          const t = totals(todaySnap.docs.map((d) => d.data()));
+          results.push({ type: 'text', text: `[app: today's totals (${clock.weekday} ${clock.day}) after this change: ${Math.round(t.calories)} cal, ${Math.round(t.protein_g)} g protein, ${Math.round(t.fiber_g)} g fiber, ${Math.round(t.fat_g)} g fat across ${t.meals} meals/snacks. Quote these if you mention today's totals.]` });
+        } catch (err) {
+          console.error('totals refresh failed', err.message);
+        }
+      }
       if (cutOff) {
         results.push({ type: 'text', text: 'Your last reply was cut off. Continue logging from where you stopped (skip anything already logged above), then reply briefly.' });
       }

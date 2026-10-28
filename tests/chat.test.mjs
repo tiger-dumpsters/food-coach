@@ -305,3 +305,28 @@ test('rerate: older meals get a split without changing totals, once', async () =
   assert.equal(again.already, true);
   assert.equal(calls.length, before + 1);
 });
+
+test('yesterday\'s running total is stamped; after logging the coach gets today\'s real totals', async () => {
+  for (const k of [...store.keys()]) if (k.startsWith('users/u1/messages/') || k.startsWith('users/u1/meals/')) store.delete(k);
+  const clock = makeClock('America/New_York');
+  const y = new Date(Date.now() - 864e5);
+  const yDay = makeClock('America/New_York', y).day;
+  store.set('users/u1/messages/y1', { role: 'user', text: '3 pieces of grilled chicken', day: yDay, createdAt: y });
+  store.set('users/u1/messages/y2', { role: 'assistant', text: 'You\'re at 2,070 cal for the day.', day: yDay, createdAt: new Date(y.getTime() + 1000), entries: [] });
+  store.set('users/u1/meals/ym', { day: yDay, at: y, description: 'dinner', calories: 2070, protein_g: 122, fiber_g: 26 });
+  store.set('users/u1/meals/tm', { day: clock.day, at: new Date(), description: 'breakfast', calories: 400, protein_g: 30, fiber_g: 5 });
+  queue.push(
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'l', name: 'log_meal', input: { description: 'rice bowl', items: [{ name: 'brown rice', qty: '2 cups', calories: 430, protein_g: 10, fiber_g: 7, processing: 'whole' }] } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged. You\'re at about 830 cal.' }] },
+  );
+  await handler(req('good', { text: 'rice bowl for lunch', tz: 'America/New_York' }));
+  const first = calls.at(-2);
+  const hist = JSON.stringify(first.messages);
+  assert.ok(hist.includes('[Yesterday'), hist.slice(0, 300));
+  assert.ok(hist.includes('[Today'));
+  const toolTurn = calls.at(-1).messages.at(-1).content;
+  const totalsNote = toolTurn.find((c) => c.type === 'text' && c.text.includes("today's totals"));
+  assert.ok(totalsNote, JSON.stringify(toolTurn));
+  assert.match(totalsNote.text, /830 cal/);
+  assert.match(totalsNote.text, /2 meals/);
+});
