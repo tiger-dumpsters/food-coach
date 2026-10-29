@@ -32,6 +32,8 @@ const state = {
   photo: null,            // { data, media_type, thumb } waiting to send
   invite: null,           // last invite code created
   flagging: null,         // id of the coach reply being flagged
+  viewDay: null,          // Today tab: a past day being viewed (null = today)
+  days: {},               // cache of past days' entries
 };
 
 // ---------- helpers ----------
@@ -175,7 +177,10 @@ async function api(path, body) {
 // ---------- navigation ----------
 const TITLES = { chat: 'Coach', today: 'Today', trends: 'Trends', settings: 'You' };
 document.querySelectorAll('.tabbar button').forEach((btn) => {
-  btn.addEventListener('click', () => show(btn.dataset.view));
+  btn.addEventListener('click', () => {
+    if (btn.dataset.view === 'today' && state.view === 'today') state.viewDay = null; // tap again: back to today
+    show(btn.dataset.view);
+  });
 });
 function show(view) {
   state.view = view;
@@ -390,6 +395,20 @@ function msgHtml(m, at) {
     </div>`;
 }
 
+// Per-item breakdown (with processing dots and assumptions), shared by chat cards and Today.
+function breakdownHtml(e, open = false) {
+  const items = (e.items || []).filter((it) => it && it.name);
+  if (!(items.length > 1 || e.assumptions || items.some((it) => it.processing))) return '';
+  const nums = (it) => it.derived
+    ? (hideCal() ? '' : `~${rc(it.calories)} cal`)
+    : `${hideCal() ? '' : `${rc(it.calories)} cal · `}${r(it.protein_g)}p · ${r(it.fiber_g)}f`;
+  return `
+      <details${open ? ' open' : ''}><summary>Breakdown${e.assumptions ? ' & assumptions' : ''}</summary>
+        ${items.length ? `<ul class="items">${items.map((it) => `<li><span>${it.processing ? `<i class="dot" style="background:${MIX_COLORS[it.processing]}" title="${esc(it.processing)}"></i>` : ''}${esc(it.qty ? `${it.qty} ` : '')}${esc(it.name)}</span><span>${nums(it)}</span></li>`).join('')}</ul>` : ''}
+        ${e.assumptions ? `<div class="assume">Assumed: ${esc(e.assumptions)}</div>` : ''}
+      </details>`;
+}
+
 // Blur weights everywhere in the chat — what you typed and what the coach says back.
 // A number is blurred if it matches any logged weigh-in, or if the message talks about
 // weight and the number looks like a body weight.
@@ -424,12 +443,7 @@ function cardHtml(e) {
       `${r(e.fiber_g)} g fiber`,
       e.fat_g != null ? `${r(e.fat_g)} g fat` : '',
     ].filter(Boolean).map((n) => `<span>${n}</span>`).join('');
-    const items = (e.items || []).filter((it) => it && it.name);
-    const details = items.length > 1 || e.assumptions || items.some((it) => it.processing) ? `
-      <details><summary>Breakdown${e.assumptions ? ' & assumptions' : ''}</summary>
-        ${items.length ? `<ul class="items">${items.map((it) => `<li><span>${it.processing ? `<i class="dot" style="background:${MIX_COLORS[it.processing]}" title="${esc(it.processing)}"></i>` : ''}${esc(it.qty ? `${it.qty} ` : '')}${esc(it.name)}</span><span>${hideCal() ? '' : `${rc(it.calories)} cal · `}${r(it.protein_g)}p · ${r(it.fiber_g)}f</span></li>`).join('')}</ul>` : ''}
-        ${e.assumptions ? `<div class="assume">Assumed: ${esc(e.assumptions)}</div>` : ''}
-      </details>` : '';
+    const details = breakdownHtml(e);
     const share = e.sharedWith?.length ? `<span class="share">Also logged for ${esc(e.sharedWith.join(', '))}</span>`
       : e.sharedFrom ? `<span class="share">Shared by ${esc(e.sharedFrom.name)}</span>` : '';
     return `<div class="card meal${e.struck ? ' deleted' : ''}">${e.struck ? '<span class="k">Removed</span>' : ''}
@@ -461,13 +475,40 @@ function scrollThread() {
 }
 
 // ---------- Today ----------
+// Past days: loaded on demand and cached for the session.
+async function loadDay(day) {
+  if (state.days[day]) return state.days[day];
+  const uref = doc(db, 'users', state.user.uid);
+  const [m, w, c] = await Promise.all(['meals', 'workouts', 'checkins'].map((col) => getDocs(query(collection(uref, col), where('day', '==', day)))));
+  const byTime = (a, b) => (toDate(a.at) || 0) - (toDate(b.at) || 0);
+  state.days[day] = { meals: rows(m).sort(byTime), workouts: rows(w).sort(byTime), checkins: rows(c).sort(byTime) };
+  return state.days[day];
+}
+
+function openDay(day) {
+  state.viewDay = !day || day === localDay() ? null : day;
+  state.mixFilter = null;
+  if (state.view !== 'today') show('today'); else renderToday();
+}
+
 function renderToday() {
   const el = $('#today');
-  const { meals, workouts, checkins } = state.today;
+  const today = localDay();
+  const day = state.viewDay || today;
+  const isToday = day === today;
+  $('#view-title').textContent = isToday ? 'Today' : dayLabel(day);
+  if (!isToday && !state.days[day]) {
+    el.innerHTML = `${dayNavHtml(day, isToday)}<p class="muted">Loading…</p>`;
+    bindDayNav(el, day);
+    loadDay(day).then(() => { if (state.view === 'today' && state.viewDay === day) renderToday(); });
+    return;
+  }
+  const { meals, workouts, checkins } = isToday ? state.today : state.days[day];
   const t = sum(meals);
   const tg = state.profile?.targets || {};
   const now = new Date();
-  const nowH = now.getHours() + now.getMinutes() / 60;
+  // Past days are judged as finished days.
+  const nowH = isToday ? now.getHours() + now.getMinutes() / 60 : 24;
   // Share of the day's eating you'd typically have done by now (7 am – 8 pm window).
   const pace = Math.min(1, Math.max(0, (nowH - 7) / 13));
   const mealsLeft = nowH < 11 ? 3 : nowH < 15 ? 2 : nowH < 20 ? 1 : 0;
@@ -507,17 +548,24 @@ function renderToday() {
     for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) dayMix[k] = (dayMix[k] || 0) + v;
     const upfPct = pct(dayMix).ultraprocessed || 0;
     const upfItems = [...new Set(meals.flatMap((m) => (m.items || []).filter((it) => it.processing === 'ultraprocessed').map((it) => it.name)))];
-    if (upfPct >= 25 && (meals.length >= 2 || nowH >= 11)) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
+    if (isToday && upfPct >= 25 && (meals.length >= 2 || nowH >= 11)) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
+    if (!isToday) {
+      // A finished day: a plain recap, not advice about a next meal.
+      if (tg.protein_g) gaps.push(t.protein_g >= tg.protein_g * 0.9 ? `Protein: ${r(t.protein_g)} g, hit the target.` : `Protein: ${r(t.protein_g)} of ${r(tg.protein_g)} g.`);
+      if (tg.fiber_g) gaps.push(t.fiber_g >= tg.fiber_g * 0.9 ? `Fiber: ${r(t.fiber_g)} g, hit the target.` : `Fiber: ${r(t.fiber_g)} of ${r(tg.fiber_g)} g.`);
+      if (upfPct) gaps.push(`${upfPct}% of calories ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}.`);
+    }
   }
+  const okLine = (g) => /hit the target/.test(g);
   const gapHtml = meals.length
-    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li>${esc(g)}</li>`).join('') : `<li class="ok">${nowH < 11 ? 'Good start. Keep protein and fiber in your next meal too.' : 'On pace for this time of day.'}</li>`}</ul>`
-    : '<p class="muted">Nothing logged yet today. Tell the coach what you had.</p>';
+    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li class="${okLine(g) ? 'ok' : isToday ? '' : 'neutral'}">${esc(g)}</li>`).join('') : `<li class="ok">${nowH < 11 ? 'Good start. Keep protein and fiber in your next meal too.' : 'On pace for this time of day.'}</li>`}</ul>`
+    : `<p class="muted">${isToday ? 'Nothing logged yet today. Tell the coach what you had.' : 'Nothing was logged this day.'}</p>`;
 
-  const mix = mixHtml(meals);
+  const mix = mixHtml(meals, isToday);
 
   const f = state.mixFilter;
   const log = [
-    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, mix: mealMix(m), items: m.items || [], n: [hideCal() ? '' : `${rc(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
+    ...meals.map((m) => ({ at: toDate(m.at), label: m.description, meal: m, mix: mealMix(m), items: m.items || [], n: [hideCal() ? '' : `${rc(m.calories)} cal`, `${r(m.protein_g)}p`, `${r(m.fiber_g)}f`].filter(Boolean).join(' · ') })),
     ...workouts.map((w) => ({ at: toDate(w.at), label: `Workout: ${w.type}`, n: w.duration_min ? `${r(w.duration_min)} min` : '' })),
     ...checkins.map((c) => ({ at: toDate(c.at), label: `Hunger ${c.level}/5${c.note ? ' — ' + c.note : ''}`, n: '' })),
   ].sort((a, b) => (a.at || 0) - (b.at || 0));
@@ -527,16 +575,18 @@ function renderToday() {
     const matching = f && has ? x.items.filter((it) => it.processing === f).map((it) => it.name) : [];
     const split = x.mix && Object.keys(x.mix).length ? splitBar(x.mix, 'split mini') : '';
     const which = matching.length ? `<span class="which">${esc(LEVEL_LABEL[f])}: ${esc(matching.join(', '))}</span>` : '';
-    return `<li class="${cls}"><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}${split}${which}</span><span class="n">${esc(x.n)}</span></li>`;
+    const details = x.meal ? breakdownHtml(x.meal) : '';
+    return `<li class="${cls}"><span class="t">${esc(hhmm(x.at))}</span><span>${esc(x.label)}${split}${which}</span><span class="n">${esc(x.n)}</span>${details}</li>`;
   };
 
   el.innerHTML = `
+    ${dayNavHtml(day, isToday)}
     <section class="panel">
-      <h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
-      ${tg.protein_g ? (pace > 0 && pace < 1 ? '<p class="sub">The small mark shows where you\'d typically be by this time of day.</p>' : '') : '<p class="sub">Finish setup with the coach to get personal targets.</p>'}
+      <h2>${new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
+      ${tg.protein_g ? (isToday && pace > 0 && pace < 1 ? '<p class="sub">The small mark shows where you\'d typically be by this time of day.</p>' : '') : '<p class="sub">Finish setup with the coach to get personal targets.</p>'}
       ${meters}
     </section>
-    <section class="panel"><h2>Gaps to fill</h2>${gapHtml}</section>
+    <section class="panel"><h2>${isToday ? 'Gaps to fill' : 'How the day went'}</h2>${gapHtml}</section>
     <section class="panel"><h2>Whole vs processed</h2>${mix}</section>
     <section class="panel"><h2>Log</h2>
       ${log.length ? `<ul class="log-list">${log.map(logRow).join('')}</ul>` : '<p class="muted">Empty so far.</p>'}
@@ -545,6 +595,24 @@ function renderToday() {
     state.mixFilter = state.mixFilter === b.dataset.mix ? null : b.dataset.mix;
     renderToday();
   }));
+  bindDayNav(el, day);
+}
+
+function dayNavHtml(day, isToday) {
+  return `<nav class="day-nav" aria-label="Choose day">
+    <button type="button" data-day-step="-1" aria-label="Previous day">‹</button>
+    <span>${esc(isToday ? 'Today' : dayLabel(day))}</span>
+    <button type="button" data-day-step="1" aria-label="Next day" ${isToday ? 'disabled' : ''}>›</button>
+    ${isToday ? '' : '<button type="button" class="link" data-day-today>Back to today</button>'}
+  </nav>`;
+}
+
+function bindDayNav(el, day) {
+  el.querySelectorAll('[data-day-step]').forEach((b) => b.addEventListener('click', () => {
+    const next = dayMinus(day, -Number(b.dataset.dayStep));
+    if (next <= localDay()) openDay(next);
+  }));
+  el.querySelector('[data-day-today]')?.addEventListener('click', () => openDay(null));
 }
 
 function sum(meals) {
@@ -560,7 +628,7 @@ function sum(meals) {
 }
 
 const MIX_COLORS = { whole: 'var(--accent)', processed: 'var(--amber)', ultraprocessed: 'var(--warm)', unrated: 'var(--ink-3)', mixed: 'var(--ink-3)' };
-function mixHtml(meals) {
+function mixHtml(meals, isToday = true) {
   if (!meals.length) return '<p class="muted">Shows up once you log food.</p>';
   const c = {};
   for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) c[k] = (c[k] || 0) + v;
@@ -569,7 +637,7 @@ function mixHtml(meals) {
   const parts = [...LEVELS, 'unrated'].filter((k) => p[k]);
   const bar = parts.map((k) => `<span data-mix="${k}" class="${f && f !== k ? 'dim' : ''}" style="width:${p[k]}%;background:${MIX_COLORS[k]}" title="${LEVEL_LABEL[k]}"></span>`).join('');
   const leg = parts.map((k) => `<button type="button" data-mix="${k}" class="${f === k ? 'on' : ''}"><i style="background:${MIX_COLORS[k]}"></i>${LEVEL_LABEL[k]} ${p[k]}%</button>`).join('');
-  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${LEVEL_LABEL[f]} foods in the log below · tap again to clear` : 'Share of today\'s calories · tap a color to see which foods'}</div>`;
+  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${LEVEL_LABEL[f]} foods in the log below · tap again to clear` : `Share of ${isToday ? 'today\'s' : 'the day\'s'} calories · tap a color to see which foods`}</div>`;
 }
 
 // ---------- Trends ----------
@@ -647,6 +715,7 @@ async function renderTrends() {
     panel.querySelectorAll('.sel').forEach((x) => x.classList.remove('sel'));
     (t.dataset.bar ? panel.querySelector(`#${t.dataset.bar}`) : t)?.classList.add('sel');
     panel.querySelector('.readout').innerHTML = t.dataset.tip;
+    panel.querySelector('[data-open-day]')?.addEventListener('click', (ev) => openDay(ev.target.dataset.openDay));
   }));
 }
 
@@ -663,7 +732,8 @@ function barChart(perDay, key, target, color, unit) {
   const bars = perDay.map((d, i) => {
     const x = pad + i * bw;
     const id = `b${++chartSeq}`;
-    const tip = d.logged ? `<b>${shortDate(d.day)}:</b> ${fmtV(d[key])} ${unit}${target ? ` · target ${fmtV(target)}` : ''}` : `<b>${shortDate(d.day)}:</b> nothing logged`;
+    const open = d.logged ? ` <button type="button" class="link" data-open-day="${d.day}">See day</button>` : '';
+    const tip = d.logged ? `<b>${shortDate(d.day)}:</b> ${fmtV(d[key])} ${unit}${target ? ` · target ${fmtV(target)}` : ''}${open}` : `<b>${shortDate(d.day)}:</b> nothing logged`;
     const bar = d.logged ? `<rect id="${id}" class="bar" x="${x + 2}" y="${y(d[key])}" width="${bw - 4}" height="${H - 18 - y(d[key])}" rx="3" fill="${color}"/>` : '';
     return `${bar}<rect class="hit" data-tip="${esc(tip)}" data-bar="${d.logged ? id : ''}" x="${x}" y="0" width="${bw}" height="${H - 14}"/>`;
   }).join('');

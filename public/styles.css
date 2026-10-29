@@ -327,3 +327,21 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .meter .bar { position: relative; overflow: visible; }
 .meter .fill { position: relative; z-index: 0; }
 .meter .pace { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink-2); border-radius: 2px; opacity: 0.7; }
+
+/* ---------- Day navigation (Today tab) ---------- */
+.day-nav { display: flex; align-items: center; gap: 10px; }
+.day-nav button[data-day-step] { width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); font-size: 1.3rem; line-height: 1; }
+.day-nav button:disabled { opacity: 0.35; }
+.day-nav span { font-weight: 600; min-width: 92px; text-align: center; }
+button.link { border: 0; background: none; padding: 0; color: var(--accent); font-weight: 600; font-size: 0.85rem; cursor: pointer; }
+.day-nav .link { margin-left: auto; }
+.log-list details { margin-top: 4px; }
+.log-list summary { cursor: pointer; color: var(--accent); font-size: 0.78rem; font-weight: 600; list-style: none; }
+.log-list summary::-webkit-details-marker { display: none; }
+.log-list .items { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 3px; }
+.log-list .items li { display: flex; justify-content: space-between; gap: 10px; border: 0; padding: 0; grid-template-columns: none; color: var(--ink-2); font-size: 0.8rem; }
+.log-list .items .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+.log-list .assume { margin-top: 6px; font-size: 0.78rem; color: var(--ink-3); font-style: italic; }
+
+.log-list > li > details { grid-column: 2 / -1; margin-top: 2px; }
+.gap-list li.neutral { background: var(--surface-2); }
