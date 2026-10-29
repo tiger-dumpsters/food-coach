@@ -466,13 +466,18 @@ function renderToday() {
   const { meals, workouts, checkins } = state.today;
   const t = sum(meals);
   const tg = state.profile?.targets || {};
-  const nowH = new Date().getHours();
+  const now = new Date();
+  const nowH = now.getHours() + now.getMinutes() / 60;
+  // Share of the day's eating you'd typically have done by now (7 am – 8 pm window).
+  const pace = Math.min(1, Math.max(0, (nowH - 7) / 13));
+  const mealsLeft = nowH < 11 ? 3 : nowH < 15 ? 2 : nowH < 20 ? 1 : 0;
 
   const meter = (cls, label, val, target, unit) => {
     const pct = target ? Math.min(100, (val / target) * 100) : 0;
+    const tick = target && pace > 0 && pace < 1 ? `<i class="pace" style="left:${pace * 100}%" title="Typical by this time of day"></i>` : '';
     return `<div class="meter ${cls}">
       <div class="row"><span>${label}</span><span><b>${unit ? r(val) : rc(val)}</b>${target ? ` / ${unit ? r(target) : rc(target)}` : ''} ${unit}</span></div>
-      <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+      <div class="bar"><div class="fill" style="width:${pct}%"></div>${tick}</div>
     </div>`;
   };
 
@@ -487,16 +492,25 @@ function renderToday() {
   // Simple, honest gap hints (the coach does the nuanced version in chat).
   const gaps = [];
   if (meals.length) {
-    if (tg.protein_g && t.protein_g < tg.protein_g * (nowH < 14 ? 0.3 : 0.6)) gaps.push(`Protein's running low — about ${r(tg.protein_g - t.protein_g)} g to go.`);
-    if (tg.fiber_g && t.fiber_g < tg.fiber_g * (nowH < 14 ? 0.25 : 0.5)) gaps.push(`Fiber's light so far — beans, berries, veggies or whole grains would help.`);
+    // Judge against where you'd normally be by this time of day, and say what to do at the
+    // next meal — not "running low" right after breakfast.
+    const behind = (val, target) => target && nowH >= 11 && mealsLeft > 0 && val < target * pace * 0.7;
+    // A realistic amount for one meal, not the whole remaining gap.
+    const nextMeal = (val, target, cap) => Math.min(cap, Math.max(5, Math.round((target - val) / mealsLeft / 5) * 5));
+    const meal = nowH < 15 ? 'lunch' : 'dinner';
+    if (behind(t.protein_g, tg.protein_g)) {
+      const g = nextMeal(t.protein_g, tg.protein_g, 45);
+      gaps.push(`Protein's a bit behind pace for this time of day. Aim for about ${g} g at ${meal}${g === 45 ? ' — you may not close the whole gap today, and that\'s fine' : ''}.`);
+    }
+    if (behind(t.fiber_g, tg.fiber_g)) gaps.push(`Fiber's behind pace. Beans, berries, veggies or whole grains at ${meal} would help (about ${nextMeal(t.fiber_g, tg.fiber_g, 15)} g).`);
     const dayMix = {};
     for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) dayMix[k] = (dayMix[k] || 0) + v;
     const upfPct = pct(dayMix).ultraprocessed || 0;
     const upfItems = [...new Set(meals.flatMap((m) => (m.items || []).filter((it) => it.processing === 'ultraprocessed').map((it) => it.name)))];
-    if (upfPct >= 25) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
+    if (upfPct >= 25 && (meals.length >= 2 || nowH >= 11)) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
   }
   const gapHtml = meals.length
-    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li>${esc(g)}</li>`).join('') : '<li class="ok">Nothing flagged — nicely balanced so far.</li>'}</ul>`
+    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li>${esc(g)}</li>`).join('') : `<li class="ok">${nowH < 11 ? 'Good start. Keep protein and fiber in your next meal too.' : 'On pace for this time of day.'}</li>`}</ul>`
     : '<p class="muted">Nothing logged yet today. Tell the coach what you had.</p>';
 
   const mix = mixHtml(meals);
@@ -519,7 +533,7 @@ function renderToday() {
   el.innerHTML = `
     <section class="panel">
       <h2>${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</h2>
-      ${tg.protein_g ? '' : '<p class="sub">Finish setup with the coach to get personal targets.</p>'}
+      ${tg.protein_g ? (pace > 0 && pace < 1 ? '<p class="sub">The small mark shows where you\'d typically be by this time of day.</p>' : '') : '<p class="sub">Finish setup with the coach to get personal targets.</p>'}
       ${meters}
     </section>
     <section class="panel"><h2>Gaps to fill</h2>${gapHtml}</section>
