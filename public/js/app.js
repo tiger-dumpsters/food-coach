@@ -334,8 +334,13 @@ function dayLabel(d) {
 }
 
 function msgHtml(m, at) {
+  // An entry removed later in the same reply shows crossed out, not as a second "removed" card.
+  const list = m.entries || [];
+  const removed = new Set(list.filter((e) => e.deleted).map((e) => e.id));
+  const shown = list.filter((e) => !(e.deleted && list.some((o) => !o.deleted && o.id === e.id)))
+    .map((e) => (removed.has(e.id) && !e.deleted ? { ...e, struck: true } : e));
   // A pasted log can produce dozens of cards; show a few and summarize the rest.
-  const all = (m.entries || []).map(cardHtml).filter(Boolean);
+  const all = shown.map(cardHtml).filter(Boolean);
   const cards = all.length > 5
     ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Trends</span></div>`
     : all.join('');
@@ -382,7 +387,7 @@ function cardHtml(e) {
       </details>` : '';
     const share = e.sharedWith?.length ? `<span class="share">Also logged for ${esc(e.sharedWith.join(', '))}</span>`
       : e.sharedFrom ? `<span class="share">Shared by ${esc(e.sharedFrom.name)}</span>` : '';
-    return `<div class="card meal">
+    return `<div class="card meal${e.struck ? ' deleted' : ''}">${e.struck ? '<span class="k">Removed</span>' : ''}
       <span class="k">${e.updated ? 'Updated ' : ''}${esc(e.meal || 'Food')}${e.day && e.day !== localDay() ? ' · ' + esc(dayLabel(e.day)) : ''}${e.at ? ' · ' + esc(hhmm(new Date(e.at))) : ''}</span>
       <span class="title">${esc(e.description)}</span>
       <span class="nums">${nums}</span>

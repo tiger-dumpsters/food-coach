@@ -235,6 +235,21 @@ const LOG_TOOLS = {
   log_hunger: { col: 'checkins', kind: 'hunger', label: 'hunger check-in' },
 };
 
+// Refuse placeholder or empty entries (e.g. a meal called "Test" with no food or numbers).
+const PLACEHOLDER = /^(test(ing)?|placeholder|example|sample|n\/?a|none|todo|tbd|x+|\.+|-+)$/i;
+export function rejectEntry(name, input) {
+  if (name === 'log_meal') {
+    const desc = String(input.description || '').trim();
+    if (!desc || PLACEHOLDER.test(desc)) return 'that is not a real food — only log food the user actually said they ate';
+    const items = Array.isArray(input.items) ? input.items.filter((i) => i && i.name && !PLACEHOLDER.test(String(i.name).trim())) : [];
+    if (!items.length && typeof input.calories !== 'number') return 'a meal needs at least one food with estimated nutrition';
+  }
+  if (name === 'log_workout' && !input.type) return 'a workout needs a type';
+  if (name === 'log_weight' && !(Number(input.weight) > 0)) return 'a weigh-in needs a weight';
+  if (name === 'log_hunger' && !(input.level >= 1 && input.level <= 5)) return 'hunger needs a level 1–5';
+  return null;
+}
+
 // Execute one tool call. Returns { result (string for the model), entry (for the UI card) | null }.
 // Meal totals always equal the sum of the items, so the same foods give the same totals.
 export function withItemTotals(input) {
@@ -303,6 +318,8 @@ export async function runTool(name, input, ctx) {
   const { userRef, clock, FieldValue, sourceMessageId, household, me } = ctx;
   if (name === 'log_meal' || name === 'update_meal') input = withItemTotals(input);
   if (LOG_TOOLS[name]) {
+    const problem = rejectEntry(name, input);
+    if (problem) return { result: `not saved: ${problem}`, entry: null };
     const { col, kind, label, extra = {} } = LOG_TOOLS[name];
     const { day, at } = resolveWhen(clock, input.date, input.time);
     const { shared_with: sharedWith, their_portion: portion, ...fields } = input;

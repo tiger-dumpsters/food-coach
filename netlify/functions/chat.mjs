@@ -93,10 +93,13 @@ async function callClaude({ model, system, messages }) {
 // Turn saved chat history into alternating user/assistant turns.
 // What a past reply actually saved, so the model sees the link between "logged" and a save.
 export function savedNote(entries = []) {
-  const live = (entries || []).filter(e => !e.deleted && e.kind !== 'profile');
-  if (!live.length) return '[app: nothing was saved this turn]';
-  const desc = live.slice(0, 6).map(e => e.kind === 'meal' ? `meal "${e.description}"` : e.kind === 'workout' ? `workout ${e.type}` : e.kind === 'hunger' ? `hunger ${e.level}/5` : e.kind).join('; ');
-  return `[app: saved ${live.length} — ${desc}${live.length > 6 ? '; …' : ''}]`;
+  const all = (entries || []).filter(Boolean);
+  if (!all.length) return '[app: nothing was saved this turn]';
+  const desc = all.slice(0, 6).map(e => e.deleted ? `removed ${e.kind}`
+    : e.kind === 'meal' ? `meal "${e.description}"` : e.kind === 'workout' ? `workout ${e.type}`
+    : e.kind === 'hunger' ? `hunger ${e.level}/5` : e.kind === 'profile' ? 'profile settings'
+    : e.kind === 'pantry' ? 'pantry' : e.kind).join('; ');
+  return `[app: saved — ${desc}${all.length > 6 ? '; …' : ''}]`;
 }
 
 // Does a reply claim something was logged?
@@ -268,12 +271,12 @@ export default async (req) => {
 
       let toolUses = resp.content.filter(c => c.type === 'tool_use');
       if (!toolUses.length) {
-        const saved = entries.some(e => e.kind !== 'profile');
-        if (!saved && !nudged && claimsLogged(replyText)) {
+        // Only when nothing at all was saved this turn (a profile or pantry save counts).
+        if (!entries.length && !nudged && claimsLogged(replyText)) {
           nudged = true;
           console.warn('Reply claimed a log with no tool call; nudging', { model: activeModel });
           messages.push({ role: 'assistant', content: resp.content });
-          messages.push({ role: 'user', content: 'App check: your reply says something was logged, but you called no log tool this turn, so nothing was saved. Call the log tools now for everything the user mentioned in their last message, then reply again (briefly).' });
+          messages.push({ role: 'user', content: 'App check (not from the user — never mention it): your reply says something was logged, but nothing was saved this turn. If the user\'s last message mentioned food, exercise, a weigh-in, hunger or a settings change, save it now with the right tool, then give your reply again. If there was nothing to save, just give your reply again without claiming you saved anything. Either way, reply to the user normally.' });
           replyText = '';
           continue;
         }

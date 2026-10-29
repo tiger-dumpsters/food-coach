@@ -210,7 +210,7 @@ test('reply that claims "logged" without a tool call gets corrected', async () =
   queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
   await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
   const hist = JSON.stringify(calls.at(-1).messages);
-  assert.ok(hist.includes('[app: saved 1'), hist.slice(-600));
+  assert.ok(hist.includes('[app: saved — meal "3 pieces grilled chicken"'), hist.slice(-600));
 });
 
 test('household: invite, join, shared meal lands in both logs with same numbers', async () => {
@@ -329,4 +329,34 @@ test('yesterday\'s running total is stamped; after logging the coach gets today\
   assert.ok(totalsNote, JSON.stringify(toolTurn));
   assert.match(totalsNote.text, /830 cal/);
   assert.match(totalsNote.text, /2 meals/);
+});
+
+test('placeholder "Test" meal is refused; profile saves don\'t trip the safety net', async () => {
+  const { rejectEntry } = await import('../netlify/functions/lib/tools.mjs');
+  assert.ok(rejectEntry('log_meal', { description: 'Test' }));
+  assert.ok(rejectEntry('log_meal', { description: 'lunch', items: [] }));
+  assert.equal(rejectEntry('log_meal', { description: '2 eggs', items: [{ name: 'eggs', qty: '2', calories: 140, protein_g: 12, fiber_g: 0, processing: 'whole' }] }), null);
+
+  queue.push(
+    { stop_reason: 'tool_use', content: [
+      { type: 'tool_use', id: 'g', name: 'log_meal', input: { description: '2 eggs', items: [{ name: 'eggs', qty: '2', calories: 140, protein_g: 12, fiber_g: 0, processing: 'whole' }] } },
+      { type: 'tool_use', id: 't', name: 'log_meal', input: { description: 'Test' } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged your eggs.' }] },
+  );
+  const r = await (await handler(req('good', { text: '2 eggs', tz: 'America/New_York' }))).json();
+  assert.equal(r.entries.length, 1);
+  assert.equal(r.entries[0].description, '2 eggs');
+  assert.match(JSON.stringify(calls.at(-1).messages.at(-1).content), /not saved/);
+
+  const before = calls.length;
+  queue.push(
+    { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'p', name: 'save_profile', input: { restrictions: [], allergies: [] } }] },
+    { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Saved — no restrictions or allergies.' }] },
+  );
+  const p = await (await handler(req('good', { text: 'no restrictions, no allergies', tz: 'America/New_York' }))).json();
+  assert.equal(p.reply, 'Saved — no restrictions or allergies.');
+  assert.equal(calls.length, before + 2); // no corrective round
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
+  await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
+  assert.ok(JSON.stringify(calls.at(-1).messages).includes('profile settings'));
 });
