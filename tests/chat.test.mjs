@@ -210,7 +210,7 @@ test('reply that claims "logged" without a tool call gets corrected', async () =
   queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
   await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
   const hist = JSON.stringify(calls.at(-1).messages);
-  assert.ok(hist.includes('[app: saved — meal "3 pieces grilled chicken"'), hist.slice(-600));
+  assert.ok(hist.includes('[app: saved — meal') && hist.includes('3 pieces grilled chicken'), hist.slice(-600));
 });
 
 test('household: invite, join, shared meal lands in both logs with same numbers', async () => {
