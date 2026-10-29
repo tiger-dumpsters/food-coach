@@ -370,7 +370,7 @@ function msgHtml(m, at) {
   const cards = all.length > 5
     ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Trends</span></div>`
     : all.join('');
-  const body = m.role === 'user' ? blurWeights(fmtText(m.text)) : fmtText(m.text);
+  const body = blurWeights(fmtText(m.text));
   const thumb = m.thumb ? `<img class="thumb" src="${esc(m.thumb)}" alt="Meal photo">` : (m.photo ? '<span class="muted">[photo]</span><br>' : '');
   const canFlag = m.role === 'assistant' && m.id && !m.local;
   const flag = canFlag ? (m.flagged
@@ -390,13 +390,22 @@ function msgHtml(m, at) {
     </div>`;
 }
 
-// In the user's own messages, blur numbers next to weigh-in words ("weighed 236").
-function blurWeights(html) {
-  if (!/\b(weigh|weighed|weight|weighing|scale|lbs?|kg|pounds?)\b/i.test(html)) return html;
-  return html.replace(/\b(\d{2,3}(?:\.\d)?)(\s?(?:lbs?|pounds?|kg))?\b/gi, (m0, num, unit) => {
+// Blur weights everywhere in the chat — what you typed and what the coach says back.
+// A number is blurred if it matches any logged weigh-in, or if the message talks about
+// weight and the number looks like a body weight.
+function knownWeights() {
+  const set = new Set();
+  for (const m of state.messages) for (const e of m.entries || []) if (e.kind === 'weight' && e.weight != null) set.add(Number(e.weight));
+  return set;
+}
+function blurWeights(html, known = knownWeights()) {
+  const talksWeight = /\b(weigh|weighs|weighed|weight|weighing|weigh-in|scale|lbs?|kg|pounds?)\b/i.test(html);
+  if (!talksWeight && !known.size) return html;
+  return html.replace(/(?<!&#)\b(\d{2,3}(?:\.\d{1,2})?)(\s?(?:lbs?|pounds?|kg))?\b/gi, (m0, num, unit) => {
     const n = Number(num);
-    const plausible = unit ? true : n >= 70 && n <= 450;
-    return plausible ? `<span class="blur" title="Tap to show">${m0}</span>` : m0;
+    const isKnown = known.has(n);
+    const plausible = talksWeight && (unit ? true : n >= 70 && n <= 450);
+    return isKnown || plausible ? `<span class="blur" title="Tap to show">${m0}</span>` : m0;
   });
 }
 
