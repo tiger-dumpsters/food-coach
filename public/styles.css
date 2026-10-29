@@ -316,3 +316,9 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .split.mini { display: flex; width: 64px; height: 6px; margin-top: 5px; }
 .log-list .which { display: block; font-size: 0.78rem; color: var(--ink-2); margin-top: 3px; }
 .card .items .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+
+/* ---------- Flag a reply ---------- */
+.flag-btn { border: 0; background: none; padding: 0; color: var(--ink-3); font: inherit; font-size: 0.7rem; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.flagged { color: var(--accent); }
+.flag-form { display: grid; gap: 6px; width: 100%; max-width: 320px; }
+.flag-form textarea { border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 12px; padding: 8px 10px; font: inherit; font-size: 16px; resize: none; }

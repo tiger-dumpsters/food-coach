@@ -31,6 +31,7 @@ const state = {
   mixFilter: null,        // Today: highlight foods of one processing level
   photo: null,            // { data, media_type, thumb } waiting to send
   invite: null,           // last invite code created
+  flagging: null,         // id of the coach reply being flagged
 };
 
 // ---------- helpers ----------
@@ -323,7 +324,32 @@ function renderThread() {
   }
   el.innerHTML = html;
   el.querySelectorAll('.blur').forEach((b) => b.addEventListener('click', () => b.classList.toggle('revealed')));
-  scrollThread();
+  bindFlags(el);
+  if (!state.flagging) scrollThread();
+}
+
+// "Flag" on a coach reply: optional note, saved for review.
+function bindFlags(el) {
+  el.querySelectorAll('[data-flag]').forEach((b) => b.addEventListener('click', () => {
+    state.flagging = b.dataset.flag;
+    renderThread();
+    const form = el.querySelector('.flag-form');
+    form?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    form?.querySelector('textarea')?.focus({ preventScroll: true });
+  }));
+  el.querySelector('[data-flag-cancel]')?.addEventListener('click', () => { state.flagging = null; renderThread(); });
+  el.querySelector('[data-flag-form]')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const btn = f.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Sending…';
+    try {
+      await api('flag', { messageId: f.dataset.flagForm, note: f.querySelector('textarea').value });
+      state.flagging = null; // the message updates itself through the listener
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Try again';
+    }
+  });
 }
 
 function dayLabel(d) {
@@ -346,11 +372,21 @@ function msgHtml(m, at) {
     : all.join('');
   const body = m.role === 'user' ? blurWeights(fmtText(m.text)) : fmtText(m.text);
   const thumb = m.thumb ? `<img class="thumb" src="${esc(m.thumb)}" alt="Meal photo">` : (m.photo ? '<span class="muted">[photo]</span><br>' : '');
+  const canFlag = m.role === 'assistant' && m.id && !m.local;
+  const flag = canFlag ? (m.flagged
+    ? '<span class="flagged">Flagged, thanks</span>'
+    : `<button type="button" class="flag-btn" data-flag="${esc(m.id)}">Flag</button>`) : '';
+  const form = state.flagging === m.id ? `
+    <form class="flag-form" data-flag-form="${esc(m.id)}">
+      <textarea rows="2" placeholder="What was off? (optional)"></textarea>
+      <div class="btn-row"><button class="btn small primary" type="submit" style="width:auto">Send flag</button><button class="btn small" type="button" data-flag-cancel>Cancel</button></div>
+    </form>` : '';
   return `
     <div class="msg ${m.role === 'user' ? 'user' : 'assistant'}">
       <div class="bubble">${thumb}${body}</div>
       ${cards ? `<div class="cards">${cards}</div>` : ''}
-      <span class="time">${esc(hhmm(at))}</span>
+      <span class="time">${esc(hhmm(at))}${flag ? ` · ${flag}` : ''}</span>
+      ${form}
     </div>`;
 }
 

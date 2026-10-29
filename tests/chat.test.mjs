@@ -27,7 +27,7 @@ function colRef(path, filters = [], order = null, lim = null) {
     async get() {
       let docs = [...store.entries()].filter(([k]) => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/'))
         .map(([k, v]) => ({ id: k.split('/').at(-1), data: () => v }));
-      for (const [f, op, v] of filters) docs = docs.filter(d => op === '==' ? d.data()[f] === v : d.data()[f] >= v);
+      for (const [f, op, v] of filters) docs = docs.filter(d => op === '==' ? d.data()[f] === v : op === '<=' ? d.data()[f] <= v : d.data()[f] >= v);
       if (order) { docs.sort((a, b) => (a.data()[order[0]] > b.data()[order[0]] ? 1 : -1)); if (order[1] === 'desc') docs.reverse(); }
       if (lim) docs = docs.slice(0, lim);
       return { docs };
@@ -359,4 +359,23 @@ test('placeholder "Test" meal is refused; profile saves don\'t trip the safety n
   queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'ok' }] });
   await handler(req('good', { text: 'thanks', tz: 'America/New_York' }));
   assert.ok(JSON.stringify(calls.at(-1).messages).includes('profile settings'));
+});
+
+test('flag: saves the reply with recent context for review and marks the message', async () => {
+  const { default: flag } = await import('../netlify/functions/flag.mjs');
+  for (const k of [...store.keys()]) if (k.startsWith('users/u1/messages/')) store.delete(k);
+  const t0 = Date.now();
+  store.set('users/u1/messages/f1', { role: 'user', text: 'no restrictions', createdAt: new Date(t0 - 2000), day: 'x' });
+  store.set('users/u1/messages/f2', { role: 'assistant', text: 'My last reply said "saved," not "logged"…', createdAt: new Date(t0 - 1000), entries: [{ kind: 'profile' }], model: 'claude-haiku-5-5' });
+  store.set('users/u1/messages/f3', { role: 'user', text: 'later message', createdAt: new Date(t0), day: 'x' });
+  const freq = (body, token = 'good') => new Request('http://x/flag', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  const r = await (await flag(freq({ messageId: 'f2', note: 'weird defensive reply' }))).json();
+  assert.ok(r.ok);
+  const saved = store.get(`flags/${r.flagId}`);
+  assert.equal(saved.note, 'weird defensive reply');
+  assert.equal(saved.email, 'will@tigerdumpsters.com');
+  assert.deepEqual(saved.transcript.map((m) => m.id), ['f1', 'f2']); // nothing after the flagged reply
+  assert.equal(store.get('users/u1/messages/f2').flagged, true);
+  const other = await flag(freq({ messageId: 'f2' }, 'alexa')); // can't flag someone else's message
+  assert.equal(other.status, 404);
 });
