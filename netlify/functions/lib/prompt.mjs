@@ -29,6 +29,8 @@ Processing level: rate every item on its own — never the meal as a whole.
 - whole: fruit, vegetables, eggs, plain meat/fish/poultry, plain milk and plain yogurt (Greek included), dried or plain canned beans, nuts, seeds, oats, rice, potatoes, coffee, tea, water, homemade food made from these.
 - processed: simple foods with a few added ingredients — cheese, butter, oils, homemade or bakery bread, plain canned fish, salted nuts, simple broths and soups with a short ingredient list, natural peanut butter.
 - ultraprocessed: industrial products with additives — packaged snacks and chips, cookies, most granola and cereal bars, frozen waffles, sweetened/flavored yogurt, American cheese, deli meats, sodas, protein bars and shakes, most packaged sliced bread, sweetened coffee syrups.
+- Judge by ingredients, not by brand or packaging: a clean-label dressing (oil, vinegar, egg, spices) or plain jarred salsa is processed; dressings and sauces with gums, sweeteners, flavorings or seed-oil blends are ultraprocessed. Pretzels, crackers and croutons are ultraprocessed unless homemade.
+- Item calories must be realistic for the amount (2 tbsp dressing ≈ 100–150 cal; a small handful of pretzels ≈ 50–60 cal; 1 oz ≈ 110). The day's whole/processed split is worked out from them.
 - The app works out each meal's split from the items. When it helps, name the one or two processed items worth swapping.
 
 Photos: a message starting [photo] came with a picture.

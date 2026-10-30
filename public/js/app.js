@@ -65,7 +65,15 @@ const LEVELS = ['whole', 'processed', 'ultraprocessed'];
 const LEVEL_LABEL = { whole: 'whole', processed: 'processed', ultraprocessed: 'ultraprocessed', unrated: 'older entries' };
 // Calories by processing level for one meal. Older meals rated as a whole fall back to that rating.
 function mealMix(m) {
-  if (m.processing_mix) return m.processing_mix;
+  if (m.processing_mix) {
+    // Scale the item split to the meal's saved calories, so the day's percentages always
+    // match the calorie total shown (a later correction may change one without the other).
+    const mix = m.processing_mix;
+    const sumMix = Object.values(mix).reduce((a, b) => a + b, 0);
+    const cal = Number(m.calories) || 0;
+    if (!sumMix || !cal || Math.abs(sumMix - cal) <= 1) return mix;
+    return Object.fromEntries(Object.entries(mix).map(([k, v]) => [k, (v / sumMix) * cal]));
+  }
   const k = LEVELS.includes(m.processing) ? m.processing : 'unrated';
   return { [k]: Math.max(1, m.calories || 0) };
 }
@@ -572,7 +580,7 @@ function renderToday() {
   const logRow = (x) => {
     const has = x.mix && x.mix[f] > 0;
     const cls = f ? (has ? `hl ${f}` : 'dim') : '';
-    const matching = f && has ? x.items.filter((it) => it.processing === f).map((it) => it.name) : [];
+    const matching = f && has ? x.items.filter((it) => it.processing === f).map((it) => (hideCal() || it.calories == null ? it.name : `${it.name} (${rc(it.calories)} cal)`)) : [];
     const split = x.mix && Object.keys(x.mix).length ? splitBar(x.mix, 'split mini') : '';
     const which = matching.length ? `<span class="which">${esc(LEVEL_LABEL[f])}: ${esc(matching.join(', '))}</span>` : '';
     const details = x.meal ? breakdownHtml(x.meal) : '';
@@ -637,7 +645,10 @@ function mixHtml(meals, isToday = true) {
   const parts = [...LEVELS, 'unrated'].filter((k) => p[k]);
   const bar = parts.map((k) => `<span data-mix="${k}" class="${f && f !== k ? 'dim' : ''}" style="width:${p[k]}%;background:${MIX_COLORS[k]}" title="${LEVEL_LABEL[k]}"></span>`).join('');
   const leg = parts.map((k) => `<button type="button" data-mix="${k}" class="${f === k ? 'on' : ''}"><i style="background:${MIX_COLORS[k]}"></i>${LEVEL_LABEL[k]} ${p[k]}%</button>`).join('');
-  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? `Showing ${LEVEL_LABEL[f]} foods in the log below · tap again to clear` : `Share of ${isToday ? 'today\'s' : 'the day\'s'} calories · tap a color to see which foods`}</div>`;
+  const total = Object.values(c).reduce((a, b) => a + b, 0);
+  const shown = f && !hideCal() ? `${LEVEL_LABEL[f][0].toUpperCase()}${LEVEL_LABEL[f].slice(1)}: ~${rc(c[f] || 0)} of ${rc(total)} cal (${p[f] || 0}%). Highlighted in the log below · tap again to clear`
+    : f ? `Showing ${LEVEL_LABEL[f]} foods in the log below · tap again to clear` : '';
+  return `<div class="mix">${bar}</div><div class="legend">${leg}</div><div class="mix-hint">${f ? shown : `Share of ${isToday ? 'today\'s' : 'the day\'s'} calories · tap a color to see which foods`}</div>`;
 }
 
 // ---------- Trends ----------

@@ -347,6 +347,12 @@ export async function runTool(name, input, ctx) {
       const snap = await ref.get();
       if (!snap.exists) return { result: `no meal with id ${id}`, entry: null };
       const patch = clean({ ...rest, updatedAt: FieldValue.serverTimestamp() });
+      // Calories changed without new items: rescale the stored split to match.
+      const old = snap.data();
+      if (!rest.items && typeof rest.calories === 'number' && old.processing_mix) {
+        const sumMix = Object.values(old.processing_mix).reduce((a, b) => a + b, 0) || 1;
+        patch.processing_mix = Object.fromEntries(Object.entries(old.processing_mix).map(([k, v]) => [k, Math.round((v / sumMix) * rest.calories)]));
+      }
       if (d || t) Object.assign(patch, resolveWhen(clock, d || snap.data().day, t));
       await ref.update(patch);
       const merged = { ...snap.data(), ...patch };
