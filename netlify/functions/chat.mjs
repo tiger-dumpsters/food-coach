@@ -313,7 +313,7 @@ export default async (req) => {
         try {
           const todaySnap = await userRef.collection('meals').where('day', '==', clock.day).get();
           const t = totals(todaySnap.docs.map((d) => d.data()));
-          results.push({ type: 'text', text: `[app: today's totals (${clock.weekday} ${clock.day}) after this change: ${Math.round(t.calories)} cal, ${Math.round(t.protein_g)} g protein, ${Math.round(t.fiber_g)} g fiber, ${Math.round(t.fat_g)} g fat across ${t.meals} meals/snacks. Quote these if you mention today's totals.]` });
+          results.push({ type: 'text', text: `[app: today's totals (${clock.weekday} ${clock.day}) after this change: ${Math.round(t.calories)} cal, ${Math.round(t.protein_g)} g protein, ${Math.round(t.fiber_g)} g fiber, ${Math.round(t.fat_g)} g fat across ${t.meals} meals/snacks. For reference only: don't mention totals unless the user asked about them; if they did, quote these.]` });
         } catch (err) {
           console.error('totals refresh failed', err.message);
         }

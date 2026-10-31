@@ -379,3 +379,12 @@ test('flag: saves the reply with recent context for review and marks the message
   const other = await flag(freq({ messageId: 'f2' }, 'alexa')); // can't flag someone else's message
   assert.equal(other.status, 404);
 });
+
+test('coach instructions: positive tone, no unprompted totals or next-meal advice', async () => {
+  const { buildSystem } = await import('../netlify/functions/lib/prompt.mjs');
+  const sys = buildSystem({ profile: { onboarded: true }, clock: makeClock('America/New_York'), today: { meals: [], workouts: [], checkins: [] }, week: [], recentWeights: [] });
+  assert.match(sys, /positive and reinforcing/);
+  assert.match(sys, /Never criticize or police what they ate/);
+  assert.match(sys, /Don't follow up with day totals, gaps, targets, or what the next meal should be/);
+  assert.doesNotMatch(sys, /Point out gaps when they matter/);
+});

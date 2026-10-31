@@ -549,24 +549,26 @@ function renderToday() {
     const meal = nowH < 15 ? 'lunch' : 'dinner';
     if (behind(t.protein_g, tg.protein_g)) {
       const g = nextMeal(t.protein_g, tg.protein_g, 45);
-      gaps.push(`Protein's a bit behind pace for this time of day. Aim for about ${g} g at ${meal}${g === 45 ? ' — you may not close the whole gap today, and that\'s fine' : ''}.`);
+      gaps.push(`Room for more protein: about ${g} g at ${meal} would round out the day nicely.`);
     }
-    if (behind(t.fiber_g, tg.fiber_g)) gaps.push(`Fiber's behind pace. Beans, berries, veggies or whole grains at ${meal} would help (about ${nextMeal(t.fiber_g, tg.fiber_g, 15)} g).`);
+    if (behind(t.fiber_g, tg.fiber_g)) gaps.push(`Room for more fiber: beans, berries, veggies or whole grains at ${meal} (about ${nextMeal(t.fiber_g, tg.fiber_g, 15)} g).`);
+    if (isToday && tg.protein_g && t.protein_g >= tg.protein_g * 0.9) gaps.unshift('Protein target reached. Nice work.');
+    if (isToday && tg.fiber_g && t.fiber_g >= tg.fiber_g * 0.9) gaps.unshift('Fiber target reached. Nice.');
     const dayMix = {};
     for (const m of meals) for (const [k, v] of Object.entries(mealMix(m))) dayMix[k] = (dayMix[k] || 0) + v;
-    const upfPct = pct(dayMix).ultraprocessed || 0;
-    const upfItems = [...new Set(meals.flatMap((m) => (m.items || []).filter((it) => it.processing === 'ultraprocessed').map((it) => it.name)))];
-    if (isToday && upfPct >= 25 && (meals.length >= 2 || nowH >= 11)) gaps.push(`About ${upfPct}% of today's calories are ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}. Maybe make the next one whole food.`);
+    const wholePct = pct(dayMix).whole || 0;
+    if (isToday && wholePct >= 60 && meals.length >= 2) gaps.push(`${wholePct}% of today's calories came from whole foods.`);
     if (!isToday) {
       // A finished day: a plain recap, not advice about a next meal.
       if (tg.protein_g) gaps.push(t.protein_g >= tg.protein_g * 0.9 ? `Protein: ${r(t.protein_g)} g, hit the target.` : `Protein: ${r(t.protein_g)} of ${r(tg.protein_g)} g.`);
       if (tg.fiber_g) gaps.push(t.fiber_g >= tg.fiber_g * 0.9 ? `Fiber: ${r(t.fiber_g)} g, hit the target.` : `Fiber: ${r(t.fiber_g)} of ${r(tg.fiber_g)} g.`);
-      if (upfPct) gaps.push(`${upfPct}% of calories ultraprocessed${upfItems.length ? ` (${upfItems.slice(0, 3).join(', ')})` : ''}.`);
+      const wp = pct(dayMix).whole || 0;
+      if (wp) gaps.push(`${wp}% of calories from whole foods.`);
     }
   }
-  const okLine = (g) => /hit the target/.test(g);
+  const okLine = (g) => /hit the target|target reached|came from whole foods/.test(g);
   const gapHtml = meals.length
-    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li class="${okLine(g) ? 'ok' : isToday ? '' : 'neutral'}">${esc(g)}</li>`).join('') : `<li class="ok">${nowH < 11 ? 'Good start. Keep protein and fiber in your next meal too.' : 'On pace for this time of day.'}</li>`}</ul>`
+    ? `<ul class="gap-list">${gaps.length ? gaps.map((g) => `<li class="${okLine(g) ? 'ok' : 'neutral'}">${esc(g)}</li>`).join('') : `<li class="ok">${nowH < 11 ? 'Good start. Keep protein and fiber in your next meal too.' : 'On pace for this time of day.'}</li>`}</ul>`
     : `<p class="muted">${isToday ? 'Nothing logged yet today. Tell the coach what you had.' : 'Nothing was logged this day.'}</p>`;
 
   const mix = mixHtml(meals, isToday);
@@ -594,7 +596,7 @@ function renderToday() {
       ${tg.protein_g ? (isToday && pace > 0 && pace < 1 ? '<p class="sub">The small mark shows where you\'d typically be by this time of day.</p>' : '') : '<p class="sub">Finish setup with the coach to get personal targets.</p>'}
       ${meters}
     </section>
-    <section class="panel"><h2>${isToday ? 'Gaps to fill' : 'How the day went'}</h2>${gapHtml}</section>
+    <section class="panel"><h2>${isToday ? 'How today is going' : 'How the day went'}</h2>${gapHtml}</section>
     <section class="panel"><h2>Whole vs processed</h2>${mix}</section>
     <section class="panel"><h2>Log</h2>
       ${log.length ? `<ul class="log-list">${log.map(logRow).join('')}</ul>` : '<p class="muted">Empty so far.</p>'}
