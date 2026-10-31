@@ -388,3 +388,51 @@ test('coach instructions: positive tone, no unprompted totals or next-meal advic
   assert.match(sys, /Don't follow up with day totals, gaps, targets, or what the next meal should be/);
   assert.doesNotMatch(sys, /Point out gaps when they matter/);
 });
+
+test('occasions: holidays and Mondays', async () => {
+  const { occasionFor } = await import('../netlify/functions/lib/occasions.mjs');
+  assert.equal(occasionFor('2026-10-31').name, 'Halloween');
+  assert.equal(occasionFor('2026-11-26').name, 'Thanksgiving');
+  assert.equal(occasionFor('2026-09-07').name, 'Labor Day');
+  assert.equal(occasionFor('2026-05-25').name, 'Memorial Day');
+  assert.equal(occasionFor('2026-04-05').name, 'Easter');
+  assert.equal(occasionFor('2027-03-28').name, 'Easter');
+  assert.equal(occasionFor('2026-07-04').name, 'the Fourth of July');
+  assert.equal(occasionFor('2026-11-02').kind, 'monday');
+  assert.equal(occasionFor('2026-11-01'), null);
+});
+
+test('morning notes: one supportive note on Halloween, none twice, none when off', async () => {
+  const { runMorning, factsFor } = await import('../netlify/functions/morning.mjs');
+  for (const k of [...store.keys()]) if (k.startsWith('users/')) store.delete(k);
+  const recent = new Date('2026-10-30T15:00:00Z');
+  store.set('users/u1', { onboarded: true, name: 'Will', tz: 'America/New_York', lastActiveAt: recent, targets: { protein_g: 160 } });
+  store.set('users/u2', { onboarded: true, name: 'Alexa', tz: 'America/New_York', lastActiveAt: recent, morning_notes: false });
+  store.set('users/u3', { onboarded: true, name: 'Old', tz: 'America/New_York', lastActiveAt: new Date('2026-09-01T00:00:00Z') });
+  store.set('users/u1/meals/a', { day: '2026-10-30', calories: 2000, protein_g: 150, fiber_g: 30, processing_mix: { whole: 1500, processed: 300, ultraprocessed: 200 } });
+  store.set('users/u1/meals/b', { day: '2026-10-29', calories: 1900, protein_g: 120, fiber_g: 25 });
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: "Happy Halloween, Will! You've logged every day lately. Enjoy the treats." }] });
+  const sent = await runMorning(new Date('2026-10-31T17:00:00Z')); // 1 pm in Andover
+  assert.deepEqual(sent, ['u1']);
+  const notes = [...store.entries()].filter(([k, v]) => k.startsWith('users/u1/messages/') && v.kind === 'morning');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0][1].text, /Halloween/);
+  const prompt = calls.at(-1).messages[0].content;
+  assert.match(prompt, /Halloween \(holiday\)/);
+  assert.match(prompt, /Days logged in the last 3: 2/);
+  assert.deepEqual(await runMorning(new Date('2026-10-31T18:00:00Z')), []); // already sent today
+  assert.deepEqual(await runMorning(new Date('2026-11-01T14:00:00Z')), []); // ordinary Sunday
+  assert.deepEqual(await runMorning(new Date('2026-11-02T10:00:00Z')), []); // Monday 5 am: too early
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Morning, Will. New week!' }] });
+  assert.deepEqual(await runMorning(new Date('2026-11-02T13:00:00Z')), ['u1']); // Monday 8 am
+  assert.ok(factsFor('Will', { kind: 'monday' }, [], {}, '2026-11-02').includes('Monday'));
+});
+
+test('morning notes reach older accounts with no activity timestamp', async () => {
+  const { runMorning } = await import('../netlify/functions/morning.mjs');
+  for (const k of [...store.keys()]) if (k.startsWith('users/')) store.delete(k);
+  store.set('users/u9', { onboarded: true, name: 'Sofia' });
+  store.set('users/u9/messages/m', { role: 'user', text: 'eggs', createdAt: new Date('2026-10-30T12:00:00Z') });
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Happy Halloween, Sofia!' }] });
+  assert.deepEqual(await runMorning(new Date('2026-10-31T17:00:00Z')), ['u9']);
+});

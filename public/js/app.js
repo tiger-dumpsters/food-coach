@@ -859,6 +859,7 @@ function renderSettings() {
       </div>
       <label class="toggle"><span>Hide calories everywhere</span><input type="checkbox" id="hide-cal" ${p.hide_calories ? 'checked' : ''}></label>
       <label class="toggle"><span>Track weight</span><input type="checkbox" id="track-weight" ${p.track_weight ? 'checked' : ''}></label>
+      <label class="toggle"><span>Morning notes on Mondays and holidays</span><input type="checkbox" id="morning-notes" ${p.morning_notes === false ? '' : 'checked'}></label>
     </section>
 
     <div class="btn-row">
@@ -907,6 +908,7 @@ async function saveSettings() {
     ...(state.household ? {} : { staples: split('#staples') }),
     hide_calories: $('#hide-cal').checked,
     track_weight: $('#track-weight').checked,
+    morning_notes: $('#morning-notes').checked,
     targets: {
       ...(state.profile?.targets || {}),
       protein_g: num('#t-protein'),

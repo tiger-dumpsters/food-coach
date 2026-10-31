@@ -181,6 +181,8 @@ export default async (req) => {
   if (!profileSnap.exists) {
     await userRef.set({ email, createdAt: FieldValue.serverTimestamp(), onboarded: false });
   }
+  // Remember the user's timezone and last activity (used for morning notes).
+  userRef.set({ tz: clock.tz, lastActiveAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => {});
   const household = await loadHousehold(db, profile?.householdId, uid);
   const me = { uid, name: firstName(profile?.name, email) };
 
