@@ -26,7 +26,7 @@ function colRef(path, filters = [], order = null, lim = null) {
     limit: (n) => colRef(path, filters, order, n),
     async get() {
       let docs = [...store.entries()].filter(([k]) => k.startsWith(path + '/') && !k.slice(path.length + 1).includes('/'))
-        .map(([k, v]) => ({ id: k.split('/').at(-1), data: () => v }));
+        .map(([k, v]) => ({ id: k.split('/').at(-1), data: () => v, ref: docRef(k) }));
       for (const [f, op, v] of filters) docs = docs.filter(d => op === '==' ? d.data()[f] === v : op === '<=' ? d.data()[f] <= v : d.data()[f] >= v);
       if (order) { docs.sort((a, b) => (a.data()[order[0]] > b.data()[order[0]] ? 1 : -1)); if (order[1] === 'desc') docs.reverse(); }
       if (lim) docs = docs.slice(0, lim);
@@ -44,6 +44,15 @@ const fakeDb = {
   },
 };
 mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => fakeDb, FieldValue } });
+const pushed = [];
+let vapidMade = 0;
+mock.module('web-push', { defaultExport: {
+  generateVAPIDKeys: () => { vapidMade++; return { publicKey: 'PUB' + vapidMade, privateKey: 'PRIV' + vapidMade }; },
+  sendNotification: async (sub, payload) => {
+    if (sub.endpoint.includes('dead')) { const e = new Error('gone'); e.statusCode = 410; throw e; }
+    pushed.push({ endpoint: sub.endpoint, payload: JSON.parse(payload) });
+  },
+} });
 
 // ---- fake Claude: first call logs a meal + hunger, second returns text ----
 const calls = [];
@@ -435,4 +444,32 @@ test('morning notes reach older accounts with no activity timestamp', async () =
   store.set('users/u9/messages/m', { role: 'user', text: 'eggs', createdAt: new Date('2026-10-30T12:00:00Z') });
   queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Happy Halloween, Sofia!' }] });
   assert.deepEqual(await runMorning(new Date('2026-10-31T17:00:00Z')), ['u9']);
+});
+
+test('push: keys made once, subscribe, test send, dead devices removed, morning note pushes', async () => {
+  const { default: push } = await import('../netlify/functions/push.mjs');
+  const preq = (body, token = 'good') => new Request('http://x/push', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  for (const k of [...store.keys()]) if (k.startsWith('users/') || k.startsWith('config/')) store.delete(k);
+  const k1 = await (await push(preq({ action: 'key' }))).json();
+  const k2 = await (await push(preq({ action: 'key' }))).json();
+  assert.equal(k1.publicKey, k2.publicKey);
+  assert.equal(vapidMade, 1);
+  assert.ok(store.get('config/vapid').privateKey);
+  const sub = (endpoint) => ({ endpoint, keys: { p256dh: 'p', auth: 'a' } });
+  assert.equal((await push(preq({ action: 'subscribe', subscription: sub('https://push.example/phone') }))).status, 200);
+  await push(preq({ action: 'subscribe', subscription: sub('https://push.example/dead') }));
+  assert.equal(store.get('users/u1').push_enabled, true);
+  const t = await (await push(preq({ action: 'test' }))).json();
+  assert.equal(t.sent, 1);
+  assert.equal([...store.keys()].filter((k) => k.startsWith('users/u1/push/')).length, 1); // dead one removed
+  assert.equal((await push(preq({ action: 'subscribe', subscription: { endpoint: 'x' } }))).status, 400);
+
+  const { runMorning } = await import('../netlify/functions/morning.mjs');
+  store.set('users/u1', { ...store.get('users/u1'), onboarded: true, name: 'Will', tz: 'America/New_York', lastActiveAt: new Date('2026-12-24T12:00:00Z') });
+  pushed.length = 0;
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: 'Merry Christmas, Will! Enjoy every bite today.' }] });
+  assert.deepEqual(await runMorning(new Date('2026-12-25T14:00:00Z')), ['u1']);
+  assert.equal(pushed.length, 1);
+  assert.equal(pushed[0].payload.title, 'Happy Christmas');
+  assert.match(pushed[0].payload.body, /Merry Christmas/);
 });

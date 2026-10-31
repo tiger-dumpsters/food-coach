@@ -6,10 +6,11 @@
   "description": "Chat-first food and fitness coach (beta)",
   "scripts": {
     "test": "node --experimental-test-module-mocks --test tests/chat.test.mjs tests/insights.test.mjs",
-    "check": "node --check netlify/functions/morning.mjs && node --check netlify/functions/lib/occasions.mjs && node --check netlify/functions/flag.mjs && node --check netlify/functions/rerate.mjs && node --check netlify/functions/household.mjs && node --check netlify/functions/lib/admin.mjs && node --check public/js/insights.js && node --check netlify/functions/chat.mjs &&node --check netlify/functions/lib/prompt.mjs && node --check netlify/functions/lib/tools.mjs && node --check public/js/app.js"
+    "check": "node --check netlify/functions/push.mjs && node --check netlify/functions/lib/push.mjs && node --check public/sw.js && node --check netlify/functions/morning.mjs && node --check netlify/functions/lib/occasions.mjs && node --check netlify/functions/flag.mjs && node --check netlify/functions/rerate.mjs && node --check netlify/functions/household.mjs && node --check netlify/functions/lib/admin.mjs && node --check public/js/insights.js && node --check netlify/functions/chat.mjs &&node --check netlify/functions/lib/prompt.mjs && node --check netlify/functions/lib/tools.mjs && node --check public/js/app.js"
   },
   "dependencies": {
-    "firebase-admin": "^13.0.0"
+    "firebase-admin": "^13.0.0",
+    "web-push": "^3.6.7"
   },
   "engines": {
     "node": ">=20"

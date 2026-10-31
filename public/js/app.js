@@ -867,6 +867,8 @@ function renderSettings() {
       <span id="saved-note" class="saved-note" hidden>Saved</span>
     </div>
 
+    <section class="panel" id="push-panel"><h2>Notifications</h2><p class="muted">Checking…</p></section>
+
     <section class="panel">
       <h2>About the numbers</h2>
       <p class="disclaimer">Food Coach gives estimates, not measurements. Numbers come from your description, a photo or a label, and even packaged-food labels can legally be off by 20%. Estimates are built to be consistent, so the patterns hold up: what keeps you full, where the gaps are, how your week is trending. The more specific you are (amounts, brands, how it was cooked), the closer they get. Tap "Breakdown" on any meal to see what the coach assumed. This isn't medical advice; talk to a doctor or dietitian about medical conditions.</p>
@@ -883,6 +885,7 @@ function renderSettings() {
     </section>`;
 
   bindHousehold();
+  refreshPushPanel();
   $('#restr').addEventListener('click', (e) => {
     const b = e.target.closest('button');
     if (b) b.classList.toggle('on');
@@ -986,6 +989,70 @@ function bindHousehold() {
     try { await api('household', { action: 'leave' }); state.invite = null; }
     catch (e) { err(e.message); busy(ev.target, false); }
   });
+}
+
+// ---------- Push notifications ----------
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function currentSubscription() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+async function refreshPushPanel(note = '') {
+  const el = $('#push-panel');
+  if (!el) return;
+  const head = '<h2>Notifications</h2><p class="disclaimer">Monday and holiday notes from your coach, delivered like a text. Nothing else for now.</p>';
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  let body;
+  if (isIOS && !standalone) {
+    body = '<p class="muted" style="margin-top:8px">On iPhone, notifications work once the app is on your home screen: in Safari tap Share → Add to Home Screen, then open it from the icon and come back here.</p>';
+  } else if (!supported) {
+    body = '<p class="muted" style="margin-top:8px">This browser doesn\'t support notifications. On iPhone, update to iOS 16.4 or later and use the home-screen app.</p>';
+  } else if (Notification.permission === 'denied') {
+    body = '<p class="muted" style="margin-top:8px">Notifications are blocked for this app. On iPhone: Settings → Notifications → Food Coach → Allow Notifications. Then come back here.</p>';
+  } else {
+    const sub = Notification.permission === 'granted' ? await currentSubscription().catch(() => null) : null;
+    body = sub
+      ? `<p class="saved-note" style="margin-top:8px">On for this device.</p>
+         <div class="btn-row" style="margin-top:8px"><button class="btn small" id="push-test">Send a test</button><button class="btn small" id="push-off">Turn off</button></div>`
+      : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="push-on" style="width:auto">Turn on notifications</button></div>';
+  }
+  el.innerHTML = head + body + (note ? `<p class="sub" style="margin-top:8px">${esc(note)}</p>` : '');
+  $('#push-on')?.addEventListener('click', enablePush);
+  $('#push-test')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { const r = await api('push', { action: 'test' }); refreshPushPanel(r.sent ? 'Sent. It should arrive in a few seconds.' : 'Nothing was sent. Try turning notifications off and on.'); }
+    catch (err) { refreshPushPanel(`Couldn't send: ${err.message}`); }
+  });
+  $('#push-off')?.addEventListener('click', async () => {
+    const sub = await currentSubscription().catch(() => null);
+    if (sub) { await api('push', { action: 'unsubscribe', subscription: sub.toJSON() }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+    refreshPushPanel('Turned off for this device.');
+  });
+}
+
+async function enablePush(e) {
+  e.target.disabled = true;
+  try {
+    // Must be asked straight from the tap (iOS requires it).
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return refreshPushPanel(perm === 'denied' ? '' : 'No problem. You can turn them on any time.');
+    const { publicKey } = await api('push', { action: 'key' });
+    const reg = await navigator.serviceWorker.ready;
+    const sub = (await reg.pushManager.getSubscription())
+      || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(publicKey) });
+    await api('push', { action: 'subscribe', subscription: sub.toJSON() });
+    refreshPushPanel('Notifications are on. Tap "Send a test" to check.');
+  } catch (err) {
+    refreshPushPanel(`Couldn't turn on notifications: ${err.message}`);
+  }
 }
 
 async function exportCsv() {

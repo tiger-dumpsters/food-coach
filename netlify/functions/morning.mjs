@@ -6,6 +6,7 @@ import { admin } from './lib/admin.mjs';
 import { occasionFor } from './lib/occasions.mjs';
 import { makeClock, dayMinus } from './chat.mjs';
 import { totals } from './lib/prompt.mjs';
+import { sendToUser } from './lib/push.mjs';
 
 const MODEL = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const ACTIVE_DAYS = 14;
@@ -90,6 +91,10 @@ export async function runMorning(now = new Date()) {
     await ref.collection('messages').add({
       role: 'assistant', text, kind: 'morning', entries: [], day: clock.day, createdAt: FieldValue.serverTimestamp(),
     });
+    if (p.push_enabled) {
+      await sendToUser(db, u.id, { title: occasion.kind === 'holiday' ? `Happy ${occasion.name.replace(/^the /, '')}` : 'Good morning', body: text, tag: `morning-${clock.day}` })
+        .catch((err) => console.error('morning push', err.message));
+    }
     sent.push(u.id);
   }));
   return sent;
