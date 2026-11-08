@@ -1,4 +1,4 @@
-# Food Coach (beta)
+# HungerHush (beta)
 
 A food and fitness coach you chat with. Log meals, workouts, weigh-ins and hunger in plain language; the coach turns them into structured data, spots gaps and hunger patterns, and suggests what to eat next.
 
@@ -11,7 +11,7 @@ A food and fitness coach you chat with. Log meals, workouts, weigh-ins and hunge
 - `netlify/functions/lib/prompt.mjs` — the coach's instructions and context builder.
 - `netlify/functions/lib/tools.mjs` — `log_meal`, `update_meal`, `log_workout`, `log_weight`, `log_hunger`, `delete_entry`, `save_profile`.
 - `netlify/functions/household.mjs` — invite codes, join, leave for household mode.
-- `public/js/insights.js` — hunger heat map, weak spots, keeps-you-full (used by the Trends tab and the coach).
+- `public/js/insights.js` — hunger heat map, weak spots, keeps-you-full (used by the Patterns tab and the coach).
 - `firestore.rules` — each user can read/write only `users/{their uid}/…`; household members can read their household (names, pantry, shared-meal food numbers) and edit its pantry.
 
 Data lives under `users/{uid}`: the profile doc, plus `messages`, `meals`, `workouts`, `weighins`, `checkins`.

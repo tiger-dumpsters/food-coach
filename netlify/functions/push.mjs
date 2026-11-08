@@ -39,7 +39,7 @@ export default async (req) => {
   }
 
   if (body.action === 'test') {
-    const sent = await sendToUser(db, who.uid, { title: 'Food Coach', body: "Notifications are on. I'll only ping you for the good stuff.", tag: 'test' });
+    const sent = await sendToUser(db, who.uid, { title: 'HungerHush', body: "Notifications are on. I'll only ping you for the good stuff.", tag: 'test' });
     return json(200, { sent });
   }
 
