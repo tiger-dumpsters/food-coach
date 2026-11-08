@@ -5,7 +5,15 @@ service cloud.firestore {
     // other beta users and household members -- can see anything under users/{uid}.
     // (Meals shared with a household member are copied into their log by the server.)
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      function isOwner() { return request.auth != null && request.auth.uid == uid; }
+      // Beta access fields are set only by the server (invite links), never by the app.
+      function noAccessFields() { return !request.resource.data.keys().hasAny(['access', 'invitedBy', 'inviteCode', 'accessAt']); }
+      function accessUnchanged() {
+        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['access', 'invitedBy', 'inviteCode', 'accessAt']);
+      }
+      allow read, delete: if isOwner();
+      allow create: if isOwner() && noAccessFields();
+      allow update: if isOwner() && accessUnchanged();
 
       match /{document=**} {
         allow read, write: if request.auth != null && request.auth.uid == uid;
@@ -29,7 +37,7 @@ service cloud.firestore {
       }
     }
 
-    // Everything else is closed (including invite codes).
+    // Everything else is closed (invite codes, access invites, usage counters, push keys).
     match /{document=**} {
       allow read, write: if false;
     }

@@ -33,6 +33,23 @@
     </div>
   </section>
 
+  <!-- Signed in, but not in the beta yet -->
+  <section id="gate" class="signin" hidden>
+    <div class="signin-inner">
+      <div class="mark" aria-hidden="true">
+        <img src="/icons/icon.svg" alt="" width="72" height="72">
+      </div>
+      <h1 id="gate-title">Almost there</h1>
+      <p class="lede" id="gate-lede">Food Coach is invite-only for now. Open the invite link a friend sent you, or paste their invite or household code here.</p>
+      <form id="gate-form" class="gate-form">
+        <input id="gate-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Invite code" aria-label="Invite code" maxlength="24">
+        <button class="btn primary" type="submit">Join</button>
+      </form>
+      <p id="gate-error" class="error" hidden></p>
+      <p class="fine">Signed in as <span id="gate-email"></span> · <button id="gate-signout" class="linkbtn" type="button">Use a different account</button></p>
+    </div>
+  </section>
+
   <!-- Signed in -->
   <div id="app" class="app" hidden>
     <header class="topbar">

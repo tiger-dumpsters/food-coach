@@ -29,7 +29,7 @@ function firstName(profile, who) {
 
 export default async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
-  const who = await verify(req);
+  const who = await verify(req, { allowNoAccess: true });
   if (who.error) return json(who.status, { error: who.error });
   const { db } = admin();
   let body;
@@ -38,6 +38,9 @@ export default async (req) => {
   const userRef = db.collection('users').doc(who.uid);
   const profile = (await userRef.get()).data() || {};
   const name = firstName(profile, who);
+
+  // Only 'join' works before someone has access (a household invite gets them in).
+  if (!who.hasAccess && body.action !== 'join') return json(403, { error: 'This beta is invite-only.' });
 
   if (body.action === 'invite') {
     let hid = profile.householdId;
@@ -83,7 +86,7 @@ export default async (req) => {
           [`names.${who.uid}`]: name,
           pantry,
         });
-        tx.set(userRef, { householdId }, { merge: true });
+        tx.set(userRef, { householdId, ...(who.hasAccess ? {} : { access: true, invitedBy: inv.data().createdBy }) }, { merge: true });
         tx.delete(invRef);
         return { householdId, invitedBy: inv.data().createdByName };
       });

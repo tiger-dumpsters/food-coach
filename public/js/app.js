@@ -114,15 +114,80 @@ $('#signin-btn').addEventListener('click', async () => {
 });
 getRedirectResult(auth).catch(() => {});
 
-onAuthStateChanged(auth, (user) => {
+// Invite links look like /?invite=CODE. Keep the code through the Google sign-in.
+(() => {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('invite');
+  if (code) {
+    try { sessionStorage.setItem('pendingInvite', code); } catch {}
+    params.delete('invite');
+    const q = params.toString();
+    history.replaceState(null, '', location.pathname + (q ? '?' + q : '') + location.hash);
+  }
+})();
+function pendingInvite() { try { return sessionStorage.getItem('pendingInvite'); } catch { return null; } }
+function clearPendingInvite() { try { sessionStorage.removeItem('pendingInvite'); } catch {} }
+
+onAuthStateChanged(auth, async (user) => {
   state.unsub.forEach((u) => u());
   state.unsub = [];
   watchHousehold(null);
   state.user = user;
   $('#signin').hidden = !!user;
-  $('#app').hidden = !user;
-  if (user) startSession(user);
+  $('#gate').hidden = true;
+  $('#app').hidden = true;
+  if (!user) return;
+  let access = false;
+  try {
+    access = (await api('access', { action: 'status' })).access;
+    if (!access && pendingInvite()) access = await redeem(pendingInvite());
+  } catch (err) {
+    // Can't reach the server: let them in; the chat will say if they lack access.
+    access = true;
+  }
+  if (state.user !== user) return;
+  if (access) enterApp(user); else showGate(user);
 });
+
+function enterApp(user) {
+  $('#gate').hidden = true;
+  $('#app').hidden = false;
+  startSession(user);
+}
+
+function showGate(user) {
+  $('#gate-email').textContent = user.email || '';
+  $('#gate').hidden = false;
+}
+
+// Invite codes are 8 characters; household codes are 6. Either one gets you in.
+async function redeem(raw) {
+  const code = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const err = $('#gate-error');
+  err.hidden = true;
+  if (!code) return false;
+  try {
+    if (code.length === 6) await api('household', { action: 'join', code });
+    else await api('access', { action: 'redeem', code });
+    clearPendingInvite();
+    return true;
+  } catch (e) {
+    clearPendingInvite();
+    err.textContent = e.message;
+    err.hidden = false;
+    return false;
+  }
+}
+
+$('#gate-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('button');
+  btn.disabled = true;
+  const ok = await redeem($('#gate-code').value);
+  btn.disabled = false;
+  if (ok && state.user) enterApp(state.user);
+});
+$('#gate-signout').addEventListener('click', () => signOut(auth));
 
 function startSession(user) {
   const uref = doc(db, 'users', user.uid);
@@ -178,7 +243,7 @@ async function api(path, body) {
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(data.error || `Server error ${res.status}`), { status: res.status });
   return data;
 }
 
@@ -290,7 +355,7 @@ async function send(text, photo = null) {
       ...(photo ? { image: { media_type: photo.media_type, data: photo.data }, thumb: photo.thumb } : {}),
     }); // messages arrive through the Firestore listener
   } catch (err) {
-    state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: `Couldn't send that (${err.message}). Try again?`, local: true });
+    state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: err.status === 429 ? err.message : `Couldn't send that (${err.message}). Try again?`, local: true });
     input.value = input.value || text;
     if (photo && !state.photo) { state.photo = photo; $('#photo-img').src = photo.thumb; $('#photo-preview').hidden = false; }
   } finally {
@@ -848,6 +913,13 @@ function renderSettings() {
 
     ${householdHtml()}
 
+    <section class="panel" id="friends-panel">
+      <h2>Invite friends</h2>
+      <p class="disclaimer">Send your link to anyone you'd like to try Food Coach. They sign in with Google and they're in. Their log is private to them.</p>
+      <div id="friends-body" style="margin-top:10px">${state.friendInvite ? friendsBodyHtml() : '<div class="btn-row"><button class="btn small" id="friends-get">Get my invite link</button></div>'}</div>
+      <div id="friends-error" class="error-inline" hidden></div>
+    </section>
+
     <section class="panel">
       <h2>Daily targets</h2>
       <p class="sub">Ranges are fine — the coach treats these as guides.</p>
@@ -885,6 +957,7 @@ function renderSettings() {
     </section>`;
 
   bindHousehold();
+  bindFriends();
   refreshPushPanel();
   $('#restr').addEventListener('click', (e) => {
     const b = e.target.closest('button');
@@ -973,7 +1046,7 @@ function bindHousehold() {
     catch (e) { err(e.message); busy(ev.target, false); }
   });
   $('#hh-share')?.addEventListener('click', async () => {
-    const text = `Join my household in Food Coach: open food-coach.netlify.app, go to the You tab, and enter code ${state.invite}`;
+    const text = `Join my household in Food Coach: open ${location.origin}, sign in with Google, and enter code ${state.invite}`;
     try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); err('Copied — paste it in a text.'); } } catch { /* cancelled */ }
   });
   $('#hh-join')?.addEventListener('click', async (ev) => {
@@ -988,6 +1061,31 @@ function bindHousehold() {
     busy(ev.target, true);
     try { await api('household', { action: 'leave' }); state.invite = null; }
     catch (e) { err(e.message); busy(ev.target, false); }
+  });
+}
+
+// ---------- Invite friends ----------
+function inviteLink() { return `${location.origin}/?invite=${state.friendInvite.code}`; }
+function friendsBodyHtml() {
+  const { left } = state.friendInvite;
+  return `<div class="code code-link">${esc(inviteLink())}</div>
+    <div class="btn-row"><button class="btn small" id="friends-share">Share link</button></div>
+    <p class="sub" style="margin-top:8px">${left > 0 ? `Good for ${left} more ${left === 1 ? 'person' : 'people'}.` : 'This link is used up.'}</p>`;
+}
+function bindFriends() {
+  const err = (m) => { const e = $('#friends-error'); if (e) { e.textContent = m; e.hidden = !m; } };
+  $('#friends-get')?.addEventListener('click', async (ev) => {
+    ev.target.disabled = true; err('');
+    try { state.friendInvite = await api('access', { action: 'invite' }); renderSettings(); }
+    catch (e) { err(e.message); ev.target.disabled = false; }
+  });
+  $('#friends-share')?.addEventListener('click', async () => {
+    const url = inviteLink();
+    const text = 'Try Food Coach with me. It tracks food by chat and learns what keeps you full.';
+    try {
+      if (navigator.share) await navigator.share({ title: 'Food Coach', text, url });
+      else { await navigator.clipboard.writeText(`${text} ${url}`); err('Copied. Paste it in a text.'); }
+    } catch { /* cancelled */ }
   });
 }
 

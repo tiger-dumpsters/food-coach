@@ -6,7 +6,7 @@
 // tools, saves both chat messages, and returns the reply plus the entries it logged.
 
 import { FieldValue } from 'firebase-admin/firestore';
-import { admin, verify } from './lib/admin.mjs';
+import { admin, verify, underDailyCap } from './lib/admin.mjs';
 import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
 import { weakSpots, keepsYouFull } from '../../public/js/insights.js';
@@ -165,6 +165,9 @@ export default async (req) => {
   if (!text && !image) return json(400, { error: 'Empty message' });
 
   const clock = makeClock(body.tz);
+  if (!(await underDailyCap(db, uid, clock.day))) {
+    return json(429, { error: "You've hit today's message limit for the beta. It resets tomorrow." });
+  }
   const userRef = db.collection('users').doc(uid);
   const weekStart = dayMinus(clock.day, 13); // 2 weeks: hunger patterns need repeats
 

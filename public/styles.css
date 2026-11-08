@@ -345,3 +345,10 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); fon
 
 .log-list > li > details { grid-column: 2 / -1; margin-top: 2px; }
 .gap-list li.neutral { background: var(--surface-2); }
+
+/* Invite gate + invite link */
+.gate-form { display: flex; gap: 8px; margin-top: 20px; }
+.gate-form input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: 0.08em; text-align: center; }
+.gate-form .btn { width: auto; padding-left: 20px; padding-right: 20px; }
+.linkbtn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
+.code-link { font-size: 0.85rem; letter-spacing: 0; font-weight: 500; word-break: break-all; }

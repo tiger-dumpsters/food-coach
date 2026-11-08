@@ -35,7 +35,8 @@ function colRef(path, filters = [], order = null, lim = null) {
   };
 }
 mock.module('firebase-admin/app', { namedExports: { initializeApp() {}, cert: () => ({}), getApps: () => [1] } });
-const USERS = { good: { uid: 'u1', email: 'will@tigerdumpsters.com', name: 'Will Stewart' }, alexa: { uid: 'u2', email: 'alexa@example.com', name: 'Alexa Stewart' } };
+const USERS = { good: { uid: 'u1', email: 'will@tigerdumpsters.com', name: 'Will Stewart' }, alexa: { uid: 'u2', email: 'alexa@example.com', name: 'Alexa Stewart' },
+  sam: { uid: 'u3', email: 'sam@example.com', name: 'Sam Lee' }, jo: { uid: 'u4', email: 'jo@example.com', name: 'Jo Park' }, kim: { uid: 'u5', email: 'kim@example.com', name: 'Kim Ross' } };
 mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; } }) } });
 const fakeDb = {
   collection: (n) => colRef(n),
@@ -472,4 +473,57 @@ test('push: keys made once, subscribe, test send, dead devices removed, morning 
   assert.equal(pushed.length, 1);
   assert.equal(pushed[0].payload.title, 'Happy Christmas');
   assert.match(pushed[0].payload.body, /Merry Christmas/);
+});
+
+test('invite links: a friend not on the list gets in through a link; limits hold', async () => {
+  const { default: acc } = await import('../netlify/functions/access.mjs');
+  const areq = (token, body) => new Request('http://x/access', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  // Sam isn't on the list: chat is closed, status says no access
+  assert.equal((await handler(req('sam', { text: 'hi', tz: 'America/New_York' }))).status, 403);
+  assert.equal((await (await acc(areq('sam', { action: 'status' }))).json()).access, false);
+  assert.equal((await acc(areq('sam', { action: 'invite' }))).status, 403);
+  // Will makes a link (same code on repeat)
+  const inv = await (await acc(areq('good', { action: 'invite' }))).json();
+  assert.match(inv.code, /^[A-Z2-9]{8}$/);
+  assert.equal((await (await acc(areq('good', { action: 'invite' }))).json()).code, inv.code);
+  // bad code fails, real code works
+  assert.equal((await acc(areq('sam', { action: 'redeem', code: 'NOPE1234' }))).status, 400);
+  const ok = await (await acc(areq('sam', { action: 'redeem', code: inv.code.toLowerCase() }))).json();
+  assert.equal(ok.access, true);
+  assert.equal(store.get('users/u3').invitedBy, 'u1');
+  assert.equal(store.get(`accessInvites/${inv.code}`).uses, 1);
+  assert.equal((await handler(req('sam', { text: 'hi', tz: 'America/New_York' }))).status, 200);
+  // used-up link
+  store.set(`accessInvites/${inv.code}`, { ...store.get(`accessInvites/${inv.code}`), max: 1 });
+  const used = await acc(areq('jo', { action: 'redeem', code: inv.code }));
+  assert.equal(used.status, 400);
+  assert.match((await used.json()).error, /used up/);
+  // master beta code
+  process.env.BETA_CODE = 'FRIENDS';
+  assert.equal((await (await acc(areq('jo', { action: 'redeem', code: 'friends' }))).json()).access, true);
+  delete process.env.BETA_CODE;
+});
+
+test('household code also lets a new person in; other household actions still need access', async () => {
+  const { default: hh } = await import('../netlify/functions/household.mjs');
+  const hreq = (token, body) => new Request('http://x/household', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  assert.equal((await hh(hreq('kim', { action: 'invite' }))).status, 403);
+  const inv = await (await hh(hreq('sam', { action: 'invite' }))).json();
+  const r = await hh(hreq('kim', { action: 'join', code: inv.code }));
+  assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+  assert.equal(store.get('users/u5').access, true);
+  assert.equal(store.get('users/u5').invitedBy, 'u3');
+});
+
+test('daily message cap', async () => {
+  process.env.DAILY_MESSAGE_CAP = '1';
+  const day = makeClock('America/New_York').day;
+  store.set('usage/u4', { day, count: 0 });
+  assert.equal((await handler(req('jo', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
+  const r = await handler(req('jo', { text: 'more eggs', tz: 'America/New_York' }));
+  assert.equal(r.status, 429);
+  assert.match((await r.json()).error, /limit/);
+  store.set('usage/u4', { day: '2000-01-01', count: 99 }); // a new day resets
+  assert.equal((await handler(req('jo', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
+  delete process.env.DAILY_MESSAGE_CAP;
 });
