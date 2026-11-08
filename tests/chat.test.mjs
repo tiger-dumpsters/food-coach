@@ -527,3 +527,12 @@ test('daily message cap', async () => {
   assert.equal((await handler(req('jo', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
   delete process.env.DAILY_MESSAGE_CAP;
 });
+
+test('a retried message (same id) is answered once', async () => {
+  const before = [...store.keys()].filter((k) => k.startsWith('users/u1/messages/')).length;
+  const r1 = await handler(req('good', { text: 'an apple', tz: 'America/New_York', cid: 'abc-123' }));
+  assert.equal(r1.status, 200);
+  const r2 = await (await handler(req('good', { text: 'an apple', tz: 'America/New_York', cid: 'abc-123' }))).json();
+  assert.equal(r2.duplicate, true);
+  assert.equal([...store.keys()].filter((k) => k.startsWith('users/u1/messages/')).length, before + 2);
+});

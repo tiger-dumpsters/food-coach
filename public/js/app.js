@@ -349,13 +349,24 @@ async function send(text, photo = null) {
   state.pending = { text, thumb: photo?.thumb || null };
   $('#send').disabled = true;
   renderThread();
+  const payload = {
+    text, tz: TZ, cid: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    ...(photo ? { image: { media_type: photo.media_type, data: photo.data }, thumb: photo.thumb } : {}),
+  };
   try {
-    await api('chat', {
-      text, tz: TZ,
-      ...(photo ? { image: { media_type: photo.media_type, data: photo.data }, thumb: photo.thumb } : {}),
-    }); // messages arrive through the Firestore listener
+    // Messages arrive through the Firestore listener. A dropped connection (no reply at
+    // all) is retried once; the id stops the server answering the same message twice.
+    try { await api('chat', payload); }
+    catch (err) {
+      if (err.status) throw err;
+      await new Promise((r) => setTimeout(r, 2000));
+      await api('chat', payload);
+    }
   } catch (err) {
-    state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: err.status === 429 ? err.message : `Couldn't send that (${err.message}). Try again?`, local: true });
+    const msg = err.status === 429 ? err.message
+      : !err.status ? "Lost the connection before that went through. Your message is still in the box. Tap send to try again."
+      : `Couldn't send that (${err.message}). Try again?`;
+    state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: msg, local: true });
     input.value = input.value || text;
     if (photo && !state.photo) { state.photo = photo; $('#photo-img').src = photo.thumb; $('#photo-preview').hidden = false; }
   } finally {

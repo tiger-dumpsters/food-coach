@@ -164,6 +164,13 @@ export default async (req) => {
   const thumb = typeof body.thumb === 'string' && body.thumb.startsWith('data:image/') && body.thumb.length < 60_000 ? body.thumb : null;
   if (!text && !image) return json(400, { error: 'Empty message' });
 
+  // A retry after a dropped connection carries the same id: don't answer twice.
+  const cid = typeof body.cid === 'string' ? body.cid.slice(0, 40) : null;
+  if (cid) {
+    const dup = await db.collection('users').doc(uid).collection('messages').where('cid', '==', cid).limit(1).get();
+    if (dup.docs.length) return json(200, { duplicate: true });
+  }
+
   const clock = makeClock(body.tz);
   if (!(await underDailyCap(db, uid, clock.day))) {
     return json(429, { error: "You've hit today's message limit for the beta. It resets tomorrow." });
@@ -220,7 +227,7 @@ export default async (req) => {
 
   // Save the user's message first so entries can point back to it.
   const userMsgRef = await userRef.collection('messages').add({
-    role: 'user', text, createdAt: FieldValue.serverTimestamp(), day: clock.day,
+    role: 'user', text, createdAt: FieldValue.serverTimestamp(), day: clock.day, ...(cid ? { cid } : {}),
     ...(image ? { photo: true } : {}), ...(thumb ? { thumb } : {}),
   });
 
