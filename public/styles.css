@@ -1,46 +1,27 @@
+/* HungerHush "Dusk" palette: one moody night theme on every device. */
 :root {
-  --bg: #f6f1e7;
-  --surface: #fffdf8;
-  --surface-2: #efe8da;
-  --ink: #1d2a23;
-  --ink-2: #5b6660;
-  --ink-3: #8a928c;
-  --line: #e2dacb;
-  --accent: #2f6b4f;       /* leaf green */
-  --accent-ink: #ffffff;
-  --accent-soft: #dcebe1;
-  --warm: #c8643b;         /* terracotta */
-  --warm-soft: #f6e0d4;
-  --amber: #c99a2e;
-  --user-bubble: #2f6b4f;
-  --user-ink: #ffffff;
-  --bot-bubble: #fffdf8;
+  --bg: #1E1830;           /* night */
+  --surface: #2A2242;      /* plum */
+  --surface-2: #352B52;
+  --ink: #F3EEFF;          /* moon */
+  --ink-2: #D6CCEE;
+  --ink-3: #A79CC6;
+  --line: #3A3058;
+  --accent: #C7B3FF;       /* lilac */
+  --accent-ink: #1E1830;
+  --accent-soft: #3A3058;
+  --peach: #F6B89A;        /* nourish */
+  --warm: #F2917E;         /* coral: hunger, ultraprocessed */
+  --warm-soft: #4A3043;
+  --amber: #E9C46A;
+  --user-bubble: #C7B3FF;
+  --user-ink: #1E1830;
+  --bot-bubble: #2A2242;
   --radius: 18px;
   --tabbar-h: 64px;
-  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --display: "Fraunces", Georgia, serif;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #131b17;
-    --surface: #1b2520;
-    --surface-2: #233029;
-    --ink: #eef2ee;
-    --ink-2: #aeb8b2;
-    --ink-3: #7c8781;
-    --line: #2c3a33;
-    --accent: #6fbf94;
-    --accent-ink: #0f1a14;
-    --accent-soft: #23392d;
-    --warm: #e8875e;
-    --warm-soft: #3b2a22;
-    --amber: #e0b850;
-    --user-bubble: #3d7d5e;
-    --user-ink: #ffffff;
-    --bot-bubble: #1b2520;
-    color-scheme: dark;
-  }
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -55,12 +36,18 @@ body {
 }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; cursor: pointer; }
-h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.01em; margin: 0; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 
 /* ---------- Sign in ---------- */
 .signin { min-height: 100%; display: grid; place-items: center; padding: 32px 24px; }
 .signin-inner { max-width: 360px; text-align: center; }
 .signin h1 { font-size: 2.2rem; margin: 16px 0 8px; }
+.signin .mark img { border-radius: 18px; }
+.wordmark { font-weight: 500; letter-spacing: -0.03em; }
+.signin h1.wordmark { font-size: 2.8rem; margin-bottom: 6px; }
+.wordmark em { font-style: italic; font-weight: 600; color: var(--accent); }
+.tagline { margin: 0 0 22px; color: var(--ink-2); letter-spacing: 0.02em; }
+.tagline span { color: var(--peach); }
 .lede { color: var(--ink-2); margin: 0 0 28px; }
 .fine { color: var(--ink-3); font-size: 0.85rem; margin-top: 16px; }
 .error { color: var(--warm); font-size: 0.9rem; }
@@ -194,7 +181,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 .meter .bar { height: 10px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
 .meter .fill { height: 100%; border-radius: 999px; background: var(--accent); }
 .meter.fiber .fill { background: var(--amber); }
-.meter.fat .fill { background: #8a7bd1; }
+.meter.fat .fill { background: var(--peach); }
 .meter.cal .fill { background: var(--ink-3); }
 
 .mix { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--surface-2); }
@@ -217,7 +204,7 @@ h1, h2, h3 { font-family: var(--display); font-weight: 650; letter-spacing: -0.0
 
 .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .stat { background: var(--surface-2); border-radius: 14px; padding: 10px 12px; }
-.stat .v { font-family: var(--display); font-size: 1.4rem; font-weight: 650; }
+.stat .v { font-family: var(--display); font-size: 1.4rem; font-weight: 600; }
 .stat .l { font-size: 0.75rem; color: var(--ink-3); }
 
 /* Settings form */

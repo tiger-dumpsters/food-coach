@@ -3,19 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-  <title>Food Coach</title>
-  <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#16201b" media="(prefers-color-scheme: dark)">
+  <title>HungerHush</title>
+  <meta name="description" content="Hush. Nourish. Calm. A food coach you chat with.">
+  <meta name="theme-color" content="#1E1830">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="Food Coach">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="HungerHush">
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -25,7 +26,8 @@
       <div class="mark" aria-hidden="true">
         <img src="/icons/icon.svg" alt="" width="72" height="72">
       </div>
-      <h1>Food Coach</h1>
+      <h1 class="wordmark">hunger<em>hush</em></h1>
+      <p class="tagline">Hush. <span>Nourish.</span> Calm.</p>
       <p class="lede">Tell it what you ate. Ask it what to eat next. It keeps track, spots the gaps, and helps you stay full on real food.</p>
       <button id="signin-btn" class="btn primary">Continue with Google</button>
       <p class="fine">Private beta. Your log is visible only to you.</p>
@@ -40,7 +42,7 @@
         <img src="/icons/icon.svg" alt="" width="72" height="72">
       </div>
       <h1 id="gate-title">Almost there</h1>
-      <p class="lede" id="gate-lede">Food Coach is invite-only for now. Open the invite link a friend sent you, or paste their invite or household code here.</p>
+      <p class="lede" id="gate-lede">HungerHush is invite-only for now. Open the invite link a friend sent you, or paste their invite or household code here.</p>
       <form id="gate-form" class="gate-form">
         <input id="gate-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Invite code" aria-label="Invite code" maxlength="24">
         <button class="btn primary" type="submit">Join</button>
@@ -53,7 +55,7 @@
   <!-- Signed in -->
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <h1 id="view-title">Coach</h1>
+      <h1 id="view-title">Talk</h1>
     </header>
 
     <!-- Chat -->
@@ -103,7 +105,7 @@
     <nav class="tabbar" aria-label="Sections">
       <button data-view="chat" class="active" aria-current="page">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
-        <span>Coach</span>
+        <span>Talk</span>
       </button>
       <button data-view="today">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
@@ -111,7 +113,7 @@
       </button>
       <button data-view="trends">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-        <span>Trends</span>
+        <span>Patterns</span>
       </button>
       <button data-view="settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>

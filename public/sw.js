@@ -1,6 +1,6 @@
 // Minimal service worker: caches the app shell so it opens instantly from the home
 // screen. Data always comes live from Firestore and the chat function.
-const CACHE = 'food-coach-v16';
+const CACHE = 'hungerhush-v17';
 const SHELL = ['/', '/index.html', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/js/insights.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
@@ -33,7 +33,7 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Food Coach', {
+  e.waitUntil(self.registration.showNotification(d.title || 'HungerHush', {
     body: d.body || '', icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
     tag: d.tag, data: { url: d.url || '/' },
   }));
