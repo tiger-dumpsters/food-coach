@@ -1,6 +1,6 @@
 // Minimal service worker: caches the app shell so it opens instantly from the home
 // screen. Data always comes live from Firestore and the chat function.
-const CACHE = 'hungerhush-v1';
+const CACHE = 'hungerhush-v2';
 const SHELL = ['/app', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/js/insights.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {

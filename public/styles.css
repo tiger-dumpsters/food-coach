@@ -355,3 +355,9 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); fon
 .composer-wrap, .topbar { background: var(--bg); }
 .card { border-left-color: var(--accent); }
 .toggle input { accent-color: var(--accent); }
+
+/* Delete account + legal links */
+.danger-zone { border-color: #5A3A4E; }
+.legal-links a { color: var(--ink-2); }
+.error.notice { color: var(--ink-2); }
+.fine a { color: var(--ink-2); }

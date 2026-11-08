@@ -1028,6 +1028,18 @@ function renderSettings() {
         <button class="btn small danger" id="signout">Sign out</button>
       </div>
       <p class="sub" style="margin-top:12px">Install: in Safari tap Share → Add to Home Screen.</p>
+      <p class="sub legal-links"><a href="/support" target="_blank" rel="noopener">Help</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="/terms" target="_blank" rel="noopener">Terms</a></p>
+    </section>
+
+    <section class="panel danger-zone">
+      <h2>Delete account</h2>
+      <p class="disclaimer">Permanently deletes your account and everything in it: your log, chat, photos, and settings. ${state.plan?.paid ? 'Your Plus subscription is cancelled too. ' : ''}${state.household ? 'You\'ll leave your household; meals already shared stay in the other person\'s log. ' : ''}This can't be undone, so export your log first if you want a copy.</p>
+      <div id="del-start" class="btn-row" style="margin-top:10px"><button class="btn small danger" id="del-open">Delete my account</button></div>
+      <div id="del-confirm" hidden style="margin-top:10px">
+        <div class="field"><label for="del-word">Type DELETE to confirm</label><input type="text" id="del-word" autocomplete="off" autocapitalize="characters" spellcheck="false"></div>
+        <div class="btn-row"><button class="btn small danger" id="del-go" disabled>Delete forever</button><button class="btn small" id="del-cancel">Cancel</button></div>
+        <div id="del-error" class="error-inline" hidden></div>
+      </div>
     </section>`;
 
   bindHousehold();
@@ -1042,6 +1054,7 @@ function renderSettings() {
   $('#save-settings').addEventListener('click', saveSettings);
   $('#export').addEventListener('click', exportCsv);
   $('#signout').addEventListener('click', () => signOut(auth));
+  bindDelete();
   $('#redo').addEventListener('click', async () => {
     await updateDoc(doc(db, 'users', state.user.uid), { onboarded: false });
     show('chat');
@@ -1137,6 +1150,29 @@ function bindHousehold() {
     busy(ev.target, true);
     try { await api('household', { action: 'leave' }); state.invite = null; }
     catch (e) { err(e.message); busy(ev.target, false); }
+  });
+}
+
+// ---------- Delete account ----------
+function bindDelete() {
+  const word = $('#del-word'), go = $('#del-go');
+  $('#del-open').addEventListener('click', () => { $('#del-start').hidden = true; $('#del-confirm').hidden = false; word.focus(); });
+  $('#del-cancel').addEventListener('click', () => { $('#del-start').hidden = false; $('#del-confirm').hidden = true; word.value = ''; go.disabled = true; });
+  word.addEventListener('input', () => { go.disabled = word.value.trim().toUpperCase() !== 'DELETE'; });
+  go.addEventListener('click', async () => {
+    go.disabled = true; go.textContent = 'Deleting…';
+    try {
+      await api('account', { action: 'delete', confirm: 'DELETE' });
+      state.deleted = true;
+      state.unsub.forEach((u) => u()); state.unsub = [];
+      await signOut(auth).catch(() => {});
+      const e = $('#signin-error');
+      e.textContent = 'Your account and everything in it has been deleted. Take care.';
+      e.hidden = false; e.classList.add('notice');
+    } catch (err) {
+      const e = $('#del-error'); e.textContent = err.message; e.hidden = false;
+      go.disabled = false; go.textContent = 'Delete forever';
+    }
   });
 }
 

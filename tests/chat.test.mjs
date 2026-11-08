@@ -37,7 +37,8 @@ function colRef(path, filters = [], order = null, lim = null) {
 mock.module('firebase-admin/app', { namedExports: { initializeApp() {}, cert: () => ({}), getApps: () => [1] } });
 const USERS = { good: { uid: 'u1', email: 'will@tigerdumpsters.com', name: 'Will Stewart' }, alexa: { uid: 'u2', email: 'alexa@example.com', name: 'Alexa Stewart' },
   sam: { uid: 'u3', email: 'sam@example.com', name: 'Sam Lee' }, jo: { uid: 'u4', email: 'jo@example.com', name: 'Jo Park' }, kim: { uid: 'u5', email: 'kim@example.com', name: 'Kim Ross' } };
-mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; } }) } });
+const deletedAuth = [];
+mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; }, deleteUser: async (uid) => { deletedAuth.push(uid); } }) } });
 const fakeDb = {
   collection: (n) => colRef(n),
   async runTransaction(fn) {
@@ -614,4 +615,33 @@ test('stripe: checkout link, signed webhook turns on Plus, cancel turns it off, 
   await send({ type: 'customer.subscription.deleted', created: 200, data: { object: { id: 'sub_1', customer: 'cus_1', status: 'canceled', metadata: {} } } });
   assert.equal(planFor(store.get('users/u4')), 'free');
   for (const k of ['TIERS_ENABLED', 'STRIPE_SECRET_KEY', 'STRIPE_PRICE_ID', 'STRIPE_WEBHOOK_SECRET']) delete process.env[k];
+});
+
+test('delete account: log, chat, household seat, invites, flags, usage, subscription, and sign-in all go', async () => {
+  const { default: account } = await import('../netlify/functions/account.mjs');
+  const areq = (token, body) => new Request('http://x/account', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  // Kim (u5) is in Sam's household; give her some data, a Plus subscription, an invite, and a flag
+  process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+  store.set('users/u5', { ...store.get('users/u5'), stripeSubscriptionId: 'sub_9', stripeCustomerId: 'cus_9', planStatus: 'active', plan: 'plus' });
+  store.set('stripeCustomers/cus_9', { uid: 'u5' });
+  store.set('users/u5/meals/m1', { description: 'toast' });
+  store.set('users/u5/messages/x1', { role: 'user', text: 'toast' });
+  store.set('accessInvites/KIMCODE1', { by: 'u5', uses: 0, max: 25 });
+  store.set('flags/f9', { uid: 'u5', note: 'odd' });
+  store.set('usage/u5', { day: 'x', count: 3 });
+  const hid = store.get('users/u5').householdId;
+  assert.ok(hid && store.get(`households/${hid}`).members.includes('u5'));
+  // needs the typed confirmation
+  assert.equal((await account(areq('kim', { action: 'delete' }))).status, 400);
+  const r = await account(areq('kim', { action: 'delete', confirm: 'DELETE' }));
+  assert.equal(r.status, 200, JSON.stringify(await r.clone().json()));
+  assert.equal([...store.keys()].filter((k) => k.startsWith('users/u5')).length, 0);
+  assert.ok(!store.get(`households/${hid}`).members.includes('u5'));
+  assert.ok(store.get(`households/${hid}`).members.includes('u3'));
+  for (const k of ['accessInvites/KIMCODE1', 'flags/f9', 'usage/u5', 'stripeCustomers/cus_9']) assert.equal(store.get(k), undefined, k);
+  assert.ok(stripeCalls.some((c) => c.url.endsWith('subscriptions/sub_9')));
+  assert.deepEqual(deletedAuth, ['u5']);
+  // Sam's data untouched
+  assert.ok(store.get('users/u3'));
+  delete process.env.STRIPE_SECRET_KEY;
 });

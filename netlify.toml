@@ -36,6 +36,26 @@
   to = "/app.html"
   status = 200
 
+[[redirects]]
+  from = "/privacy"
+  to = "/privacy.html"
+  status = 200
+
+[[redirects]]
+  from = "/terms"
+  to = "/terms.html"
+  status = 200
+
+[[redirects]]
+  from = "/support"
+  to = "/support.html"
+  status = 200
+
+[[redirects]]
+  from = "/help"
+  to = "/support"
+  status = 301
+
 [[headers]]
   for = "/app.html"
   [headers.values]
