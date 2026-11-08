@@ -58,7 +58,17 @@ mock.module('web-push', { defaultExport: {
 // ---- fake Claude: first call logs a meal + hunger, second returns text ----
 const calls = [];
 const queue = []; // scripted responses; when empty, fall back to the default pair
+const stripeCalls = [];
 globalThis.fetch = async (url, init) => {
+  if (String(url).startsWith('https://api.stripe.com/')) {
+    stripeCalls.push({ url: String(url), body: init.body ? new URLSearchParams(init.body) : null });
+    const path = String(url).slice('https://api.stripe.com/v1/'.length);
+    const data = path.startsWith('checkout/') ? { url: 'https://checkout.stripe.com/c/test' }
+      : path.startsWith('billing_portal/') ? { url: 'https://billing.stripe.com/p/test' }
+      : path.startsWith('subscriptions/') ? { id: 'sub_1', customer: 'cus_1', status: 'active', cancel_at_period_end: false, items: { data: [{ current_period_end: 1800000000 }] }, metadata: {} }
+      : {};
+    return { ok: true, json: async () => data };
+  }
   const body = JSON.parse(init.body); calls.push(body);
   if (queue.length) { const q = queue.shift(); return { ok: true, json: async () => ({ usage: { input_tokens: 1, output_tokens: 1 }, ...q }) }; }
   const n = calls.length;
@@ -535,4 +545,73 @@ test('a retried message (same id) is answered once', async () => {
   const r2 = await (await handler(req('good', { text: 'an apple', tz: 'America/New_York', cid: 'abc-123' }))).json();
   assert.equal(r2.duplicate, true);
   assert.equal([...store.keys()].filter((k) => k.startsWith('users/u1/messages/')).length, before + 2);
+});
+
+test('tiers: off by default, everyone has Plus features', async () => {
+  const { planFor } = await import('../netlify/functions/lib/plans.mjs');
+  assert.equal(planFor({}), 'plus');
+});
+
+test('tiers on: free plan locks photos, household invites and the smart model; comp and paid unlock', async () => {
+  process.env.TIERS_ENABLED = 'true';
+  const { default: hh } = await import('../netlify/functions/household.mjs');
+  const { default: billing } = await import('../netlify/functions/billing.mjs');
+  const breq = (fn, token, body) => new Request('http://x/' + fn, { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  store.set('users/u4', { ...store.get('users/u4'), onboarded: true, householdId: null });
+  store.delete('usage/u4');
+  // photo refused with an upgrade note
+  const ph = await handler(req('jo', { text: '', tz: 'America/New_York', image: { media_type: 'image/jpeg', data: 'abc' } }));
+  assert.equal(ph.status, 402);
+  assert.equal((await ph.json()).code, 'upgrade');
+  // questions run on the fast model
+  const n = calls.length;
+  await handler(req('jo', { text: 'why am I always hungry at 3pm?', tz: 'America/New_York' }));
+  assert.equal(calls[n].model, 'claude-haiku-5-5');
+  // household invite is Plus
+  assert.equal((await hh(breq('household', 'jo', { action: 'invite' }))).status, 402);
+  // status
+  const st = await (await billing(breq('billing', 'jo', { action: 'status' }))).json();
+  assert.equal(st.plan, 'free'); assert.equal(st.limits.photos, false); assert.equal(st.limits.messagesPerDay, 25); assert.equal(st.billingReady, false);
+  // free cap
+  process.env.FREE_MESSAGES_PER_DAY = '1';
+  const capped = await handler(req('jo', { text: 'eggs', tz: 'America/New_York' }));
+  assert.equal(capped.status, 429);
+  assert.match((await capped.json()).error, /free plan/);
+  delete process.env.FREE_MESSAGES_PER_DAY;
+  // comped friend gets Plus
+  store.set('users/u4', { ...store.get('users/u4'), comp: true });
+  assert.equal((await (await billing(breq('billing', 'jo', { action: 'status' }))).json()).plan, 'plus');
+  store.set('users/u4', { ...store.get('users/u4'), comp: false });
+  delete process.env.TIERS_ENABLED;
+});
+
+test('stripe: checkout link, signed webhook turns on Plus, cancel turns it off, bad signature refused', async () => {
+  process.env.TIERS_ENABLED = 'true';
+  process.env.STRIPE_SECRET_KEY = 'sk_test_x'; process.env.STRIPE_PRICE_ID = 'price_1'; process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+  const { default: billing } = await import('../netlify/functions/billing.mjs');
+  const { default: hook } = await import('../netlify/functions/stripe-webhook.mjs');
+  const { signForTest } = await import('../netlify/functions/lib/stripe.mjs');
+  const { planFor } = await import('../netlify/functions/lib/plans.mjs');
+  const breq = (token, body) => new Request('http://x/billing', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  const co = await (await billing(breq('jo', { action: 'checkout' }))).json();
+  assert.equal(co.url, 'https://checkout.stripe.com/c/test');
+  const sent = stripeCalls.at(-1).body;
+  assert.equal(sent.get('client_reference_id'), 'u4'); assert.equal(sent.get('line_items[0][price]'), 'price_1'); assert.equal(sent.get('mode'), 'subscription');
+  const send = (evt, sig) => { const raw = JSON.stringify(evt); return hook(new Request('http://x/hook', { method: 'POST', headers: { 'stripe-signature': sig ?? signForTest(raw, 'whsec_test') }, body: raw })); };
+  // forged
+  assert.equal((await send({ type: 'checkout.session.completed', data: { object: {} } }, 't=1,v1=bad')).status, 400);
+  // paid
+  const r = await send({ type: 'checkout.session.completed', created: 100, data: { object: { mode: 'subscription', client_reference_id: 'u4', customer: 'cus_1', subscription: 'sub_1' } } });
+  assert.equal(r.status, 200);
+  assert.equal(planFor(store.get('users/u4')), 'plus');
+  assert.equal(store.get('users/u4').stripeCustomerId, 'cus_1');
+  assert.equal(store.get('stripeCustomers/cus_1').uid, 'u4');
+  // portal
+  assert.equal((await (await billing(breq('jo', { action: 'portal' }))).json()).url, 'https://billing.stripe.com/p/test');
+  // a stale event doesn't undo a newer one; cancel does
+  await send({ type: 'customer.subscription.updated', created: 50, data: { object: { id: 'sub_1', customer: 'cus_1', status: 'canceled', metadata: {} } } });
+  assert.equal(planFor(store.get('users/u4')), 'plus');
+  await send({ type: 'customer.subscription.deleted', created: 200, data: { object: { id: 'sub_1', customer: 'cus_1', status: 'canceled', metadata: {} } } });
+  assert.equal(planFor(store.get('users/u4')), 'free');
+  for (const k of ['TIERS_ENABLED', 'STRIPE_SECRET_KEY', 'STRIPE_PRICE_ID', 'STRIPE_WEBHOOK_SECRET']) delete process.env[k];
 });

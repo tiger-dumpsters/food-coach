@@ -41,8 +41,7 @@ async function hasAccess(db, { uid, email }) {
 }
 
 // Per-person daily message cap (a safety net on API spend). Stored server-only in usage/{uid}.
-export async function underDailyCap(db, uid, day) {
-  const cap = Number(process.env.DAILY_MESSAGE_CAP || 150);
+export async function underDailyCap(db, uid, day, cap = Number(process.env.DAILY_MESSAGE_CAP || 150)) {
   const ref = db.collection('usage').doc(uid);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);

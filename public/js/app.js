@@ -31,6 +31,7 @@ const state = {
   mixFilter: null,        // Today: highlight foods of one processing level
   photo: null,            // { data, media_type, thumb } waiting to send
   invite: null,           // last invite code created
+  plan: null,             // { plan, tiersEnabled, limits, ... } from the billing function
   flagging: null,         // id of the coach reply being flagged
   viewDay: null,          // Today tab: a past day being viewed (null = today)
   days: {},               // cache of past days' entries
@@ -153,6 +154,58 @@ function enterApp(user) {
   $('#gate').hidden = true;
   $('#app').hidden = false;
   startSession(user);
+  refreshPlan();
+  // Back from Stripe Checkout.
+  const params = new URLSearchParams(location.search);
+  if (params.has('upgraded') || params.has('upgrade')) {
+    if (params.has('upgraded')) {
+      state.messages.push({ id: 'plus' + Date.now(), role: 'assistant', text: "Welcome to Plus! Photos and households are unlocked. (If they still look locked, give it a few seconds.)", local: true });
+      renderThread();
+    }
+    history.replaceState(null, '', location.pathname);
+  }
+}
+
+// ---------- plan (Free / Plus) ----------
+async function refreshPlan() {
+  try { state.plan = await api('billing', { action: 'status' }); } catch { state.plan = null; }
+  applyPlan();
+}
+function hasFeature(f) { return !state.plan || !!state.plan.limits?.[f]; }
+function applyPlan() {
+  $('.photo-btn')?.classList.toggle('locked', !hasFeature('photos'));
+  if (state.view === 'settings') renderSettings();
+}
+function upgradeNote(text) {
+  state.messages.push({ id: 'up' + Date.now(), role: 'assistant', text, local: true, upgrade: true });
+  renderThread();
+}
+async function startCheckout(btn) {
+  if (btn) btn.disabled = true;
+  try { location.href = (await api('billing', { action: 'checkout' })).url; }
+  catch (e) { alert(e.message); if (btn) btn.disabled = false; }
+}
+async function openPortal(btn) {
+  if (btn) btn.disabled = true;
+  try { location.href = (await api('billing', { action: 'portal' })).url; }
+  catch (e) { alert(e.message); if (btn) btn.disabled = false; }
+}
+function planHtml() {
+  const pl = state.plan;
+  if (!pl || !pl.tiersEnabled) return '';
+  const date = pl.renewsAt ? new Date(pl.renewsAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+  if (pl.plan === 'plus') {
+    const line = pl.comp && !pl.paid ? "You're on Plus, on the house."
+      : pl.cancelAtPeriodEnd ? `Plus ends ${date}. You'll keep your log on the free plan.`
+      : `Plus${date ? ` · renews ${date}` : ''}`;
+    return `<section class="panel"><h2>Your plan</h2><p class="sub">${esc(line)}</p>
+      ${pl.paid ? '<div class="btn-row"><button class="btn small" id="plan-manage">Manage subscription</button></div>' : ''}</section>`;
+  }
+  return `<section class="panel plan-upsell"><h2>Your plan: Free</h2>
+    <p class="disclaimer">Free covers chat logging, hunger patterns and trends, up to ${pl.limits.messagesPerDay} messages a day.</p>
+    <ul class="plan-perks"><li>Snap a photo of a meal and it's logged</li><li>Household: shared pantry and shared meals with your partner (they join free)</li><li>Deeper answers when you ask why or what to eat</li><li>Up to 150 messages a day</li></ul>
+    ${pl.billingReady ? `<button class="btn primary" id="plan-upgrade">Upgrade to Plus${pl.priceLabel ? ` · ${esc(pl.priceLabel)}` : ''}</button>` : '<p class="sub">Plus is coming soon.</p>'}
+  </section>`;
 }
 
 function showGate(user) {
@@ -193,7 +246,10 @@ function startSession(user) {
   const uref = doc(db, 'users', user.uid);
 
   state.unsub.push(onSnapshot(uref, (snap) => {
+    const prevPlan = state.profile && [state.profile.plan, state.profile.planStatus, state.profile.comp, state.profile.planCancelAtPeriodEnd].join('|');
     state.profile = snap.exists() ? snap.data() : null;
+    const nextPlan = state.profile && [state.profile.plan, state.profile.planStatus, state.profile.comp, state.profile.planCancelAtPeriodEnd].join('|');
+    if (prevPlan && prevPlan !== nextPlan) refreshPlan();
     document.querySelectorAll('.weight-only').forEach((el) => { el.hidden = !state.profile?.track_weight; });
     watchHousehold(state.profile?.householdId || null);
     // One-time: give older meals a per-item whole/processed split (runs in the background).
@@ -305,6 +361,12 @@ $('#chips').addEventListener('click', (e) => {
 });
 
 // ---------- photos ----------
+$('.photo-btn').addEventListener('click', (e) => {
+  if (hasFeature('photos')) return;
+  e.preventDefault();
+  if (state.view !== 'chat') return;
+  upgradeNote('Photo logging is part of Plus. You can describe the meal in words and I\'ll log it the same way. Upgrade on the You tab.');
+});
 $('#photo-input').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   e.target.value = '';
@@ -363,7 +425,7 @@ async function send(text, photo = null) {
       await api('chat', payload);
     }
   } catch (err) {
-    const msg = err.status === 429 ? err.message
+    const msg = err.status === 429 || err.status === 402 ? err.message
       : !err.status ? "Lost the connection before that went through. Your message is still in the box. Tap send to try again."
       : `Couldn't send that (${err.message}). Try again?`;
     state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: msg, local: true });
@@ -910,6 +972,7 @@ function renderSettings() {
   const restr = new Set(p.restrictions || []);
 
   el.innerHTML = `
+    ${planHtml()}
     <section class="panel">
       <h2>${esc(p.name || state.user.displayName || 'You')}</h2>
       <p class="sub">${esc(state.user.email)}</p>
@@ -969,6 +1032,8 @@ function renderSettings() {
 
   bindHousehold();
   bindFriends();
+  $('#plan-upgrade')?.addEventListener('click', (e) => startCheckout(e.target));
+  $('#plan-manage')?.addEventListener('click', (e) => openPortal(e.target));
   refreshPushPanel();
   $('#restr').addEventListener('click', (e) => {
     const b = e.target.closest('button');

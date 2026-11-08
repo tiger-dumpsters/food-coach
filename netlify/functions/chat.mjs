@@ -9,6 +9,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify, underDailyCap } from './lib/admin.mjs';
 import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
+import { limitsFor, planFor, UPGRADE } from './lib/plans.mjs';
 import { weakSpots, keepsYouFull } from '../../public/js/insights.js';
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
@@ -172,14 +173,17 @@ export default async (req) => {
   }
 
   const clock = makeClock(body.tz);
-  if (!(await underDailyCap(db, uid, clock.day))) {
-    return json(429, { error: "You've hit today's message limit for the beta. It resets tomorrow." });
-  }
   const userRef = db.collection('users').doc(uid);
+  const profileSnap = await userRef.get();
+  const limits = limitsFor(profileSnap.exists ? profileSnap.data() : null);
+  if (image && !limits.photos) return json(402, { error: UPGRADE.photos, code: 'upgrade', feature: 'photos' });
+  if (!(await underDailyCap(db, uid, clock.day, limits.messagesPerDay))) {
+    const free = planFor(profileSnap.exists ? profileSnap.data() : null) === 'free';
+    return json(429, { error: free ? UPGRADE.cap(limits.messagesPerDay) : "You've hit today's message limit. It resets tomorrow.", code: free ? 'upgrade' : 'cap' });
+  }
   const weekStart = dayMinus(clock.day, 13); // 2 weeks: hunger patterns need repeats
 
-  const [profileSnap, histSnap, mealsSnap, workoutsSnap, checkinsSnap, weightsSnap] = await Promise.all([
-    userRef.get(),
+  const [histSnap, mealsSnap, workoutsSnap, checkinsSnap, weightsSnap] = await Promise.all([
     userRef.collection('messages').orderBy('createdAt', 'desc').limit(20).get(),
     userRef.collection('meals').where('day', '>=', weekStart).get(),
     userRef.collection('workouts').where('day', '>=', weekStart).get(),
@@ -253,7 +257,9 @@ export default async (req) => {
     { type: 'text', text: context },
   ];
 
-  const model = image ? MODEL_SMART : pickModel(text, profile?.onboarded);
+  // Free plan: setup and photos aside, everything runs on the fast model.
+  const picked = image ? MODEL_SMART : pickModel(text, profile?.onboarded);
+  const model = limits.smartModel || !profile?.onboarded ? picked : MODEL_FAST;
   const entries = [];
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let replyText = '';

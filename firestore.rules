@@ -6,10 +6,14 @@ service cloud.firestore {
     // (Meals shared with a household member are copied into their log by the server.)
     match /users/{uid} {
       function isOwner() { return request.auth != null && request.auth.uid == uid; }
-      // Beta access fields are set only by the server (invite links), never by the app.
-      function noAccessFields() { return !request.resource.data.keys().hasAny(['access', 'invitedBy', 'inviteCode', 'accessAt']); }
+      // Access and plan fields are set only by the server (invite links, Stripe), never by the app.
+      function serverFields() {
+        return ['access', 'invitedBy', 'inviteCode', 'accessAt', 'comp', 'plan', 'planStatus', 'planRenewsAt',
+                'planCancelAtPeriodEnd', 'planEventAt', 'planUpdatedAt', 'stripeCustomerId', 'stripeSubscriptionId'];
+      }
+      function noAccessFields() { return !request.resource.data.keys().hasAny(serverFields()); }
       function accessUnchanged() {
-        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['access', 'invitedBy', 'inviteCode', 'accessAt']);
+        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverFields());
       }
       allow read, delete: if isOwner();
       allow create: if isOwner() && noAccessFields();
@@ -37,7 +41,7 @@ service cloud.firestore {
       }
     }
 
-    // Everything else is closed (invite codes, access invites, usage counters, push keys).
+    // Everything else is closed (invite codes, access invites, usage counters, push keys, Stripe customers).
     match /{document=**} {
       allow read, write: if false;
     }

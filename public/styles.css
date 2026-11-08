@@ -352,3 +352,8 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); fon
 .gate-form .btn { width: auto; padding-left: 20px; padding-right: 20px; }
 .linkbtn { background: none; border: 0; padding: 0; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 .code-link { font-size: 0.85rem; letter-spacing: 0; font-weight: 500; word-break: break-all; }
+
+/* Plans */
+.photo-btn.locked { opacity: 0.45; }
+.plan-perks { margin: 10px 0 14px 18px; padding: 0; color: var(--ink-2, inherit); font-size: 0.92rem; line-height: 1.5; }
+.plan-perks li { margin: 2px 0; }

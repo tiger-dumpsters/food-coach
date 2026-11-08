@@ -5,6 +5,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
+import { limitsFor, UPGRADE } from './lib/plans.mjs';
 
 const MAX_MEMBERS = 6;
 const INVITE_HOURS = 72;
@@ -43,6 +44,8 @@ export default async (req) => {
   if (!who.hasAccess && body.action !== 'join') return json(403, { error: 'This beta is invite-only.' });
 
   if (body.action === 'invite') {
+    // Starting or growing a household is Plus; anyone can join one for free.
+    if (!limitsFor(profile).household) return json(402, { error: UPGRADE.household, code: 'upgrade', feature: 'household' });
     let hid = profile.householdId;
     if (!hid) {
       const ref = await db.collection('households').add({
