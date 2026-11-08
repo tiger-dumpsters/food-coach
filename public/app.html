@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <title>HungerHush</title>
+  <meta name="theme-color" content="#1E1830">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HungerHush">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Signed out -->
+  <section id="signin" class="signin" hidden>
+    <div class="signin-inner">
+      <svg class="brand-icon" width="76" height="76" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#1E1830"/><rect x="0.75" y="0.75" width="98.5" height="98.5" rx="22.5" fill="none" stroke="#3A3058" stroke-width="1.5"/><path d="M22 24 H78 A8 8 0 0 1 86 32 V60 A8 8 0 0 1 78 68 H46 L34 78 V68 H22 A8 8 0 0 1 14 60 V32 A8 8 0 0 1 22 24 Z" fill="none" stroke="#C7B3FF" stroke-width="5" stroke-linejoin="round"/><text x="48" y="54" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-weight="600" font-size="22" fill="#F3EEFF">hush</text><circle cx="75.5" cy="52" r="2.4" fill="#F6B89A"/></svg>
+      <span class="wordmark wordmark-lg">hunger<em>hush</em></span>
+      <p class="tagline">Hush. <span class="n">Nourish.</span></p>
+      <h1 class="hook">Always <em>hungry?</em></h1>
+      <p class="lede">We'll help quiet the noise and find real foods that keep you satisfied. Food noise isn't permanent. HungerHush can help.</p>
+      <button id="signin-btn" class="btn primary">Continue with Google</button>
+      <p class="fine">Private beta. Your log is visible only to you.</p>
+      <p id="signin-error" class="error" hidden></p>
+    </div>
+  </section>
+
+  <!-- Signed in, but not in the beta yet -->
+  <section id="gate" class="signin" hidden>
+    <div class="signin-inner">
+      <svg class="brand-icon" width="64" height="64" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#1E1830"/><rect x="0.75" y="0.75" width="98.5" height="98.5" rx="22.5" fill="none" stroke="#3A3058" stroke-width="1.5"/><path d="M22 24 H78 A8 8 0 0 1 86 32 V60 A8 8 0 0 1 78 68 H46 L34 78 V68 H22 A8 8 0 0 1 14 60 V32 A8 8 0 0 1 22 24 Z" fill="none" stroke="#C7B3FF" stroke-width="5" stroke-linejoin="round"/><text x="48" y="54" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-weight="600" font-size="22" fill="#F3EEFF">hush</text><circle cx="75.5" cy="52" r="2.4" fill="#F6B89A"/></svg>
+      <h1 id="gate-title">Almost there</h1>
+      <p class="lede" id="gate-lede">HungerHush is invite-only for now. Open the invite link a friend sent you, or paste their invite or household code here.</p>
+      <form id="gate-form" class="gate-form">
+        <input id="gate-code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Invite code" aria-label="Invite code" maxlength="24">
+        <button class="btn primary" type="submit">Join</button>
+      </form>
+      <p id="gate-error" class="error" hidden></p>
+      <p class="fine">Signed in as <span id="gate-email"></span> · <button id="gate-signout" class="linkbtn" type="button">Use a different account</button></p>
+    </div>
+  </section>
+
+  <!-- Signed in -->
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <h1 id="view-title"><span class="wordmark">hunger<em>hush</em></span></h1>
+    </header>
+
+    <!-- Chat -->
+    <main id="view-chat" class="view chat-view">
+      <div id="thread" class="thread" aria-live="polite"></div>
+      <div class="composer-wrap">
+        <div id="chips" class="chips">
+          <button data-fill="I had ">Log meal</button>
+          <button data-send="I'm hungry — what should I eat right now?">I'm hungry</button>
+          <button data-fill="Workout: ">Log workout</button>
+          <button data-send="How am I doing today?">How's today?</button>
+          <button data-fill="Weighed in at " class="weight-only">Weigh in</button>
+        </div>
+        <div id="photo-preview" class="photo-preview" hidden>
+          <img id="photo-img" alt="Photo to send">
+          <span class="muted">Add a note if you like (“I ate half”)</span>
+          <button type="button" id="photo-remove" class="photo-remove" aria-label="Remove photo">×</button>
+        </div>
+        <form id="composer" class="composer" autocomplete="off">
+          <label class="photo-btn" aria-label="Add a photo">
+            <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>
+            <input id="photo-input" type="file" accept="image/*" hidden>
+          </label>
+          <textarea id="input" rows="1" placeholder="What did you eat?" aria-label="Message"></textarea>
+          <button id="send" class="send" type="submit" aria-label="Send">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 12l15-7-5 15-3-6-7-2z" fill="currentColor"/></svg>
+          </button>
+        </form>
+      </div>
+    </main>
+
+    <!-- Today -->
+    <main id="view-today" class="view scroll" hidden>
+      <div id="today" class="stack"></div>
+    </main>
+
+    <!-- Trends -->
+    <main id="view-trends" class="view scroll" hidden>
+      <div id="trends" class="stack"></div>
+    </main>
+
+    <!-- Settings -->
+    <main id="view-settings" class="view scroll" hidden>
+      <div id="settings" class="stack"></div>
+    </main>
+
+    <nav class="tabbar" aria-label="Sections">
+      <button data-view="chat" class="active" aria-current="page">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>
+        <span>Talk</span>
+      </button>
+      <button data-view="today">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Today</span>
+      </button>
+      <button data-view="trends">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19H2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>Patterns</span>
+      </button>
+      <button data-view="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5 20c1-4 4-6 7-6s6 2 7 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span>You</span>
+      </button>
+    </nav>
+  </div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

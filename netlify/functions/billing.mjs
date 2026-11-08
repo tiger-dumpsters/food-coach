@@ -38,15 +38,15 @@ export default async (req) => {
       subscription_data: { metadata: { uid: who.uid } },
       metadata: { uid: who.uid },
       allow_promotion_codes: 'true',
-      success_url: `${origin}/?upgraded=1`,
-      cancel_url: `${origin}/?upgrade=cancelled`,
+      success_url: `${origin}/app?upgraded=1`,
+      cancel_url: `${origin}/app?upgrade=cancelled`,
     });
     return json(200, { url: session.url });
   }
 
   if (body.action === 'portal') {
     if (!profile.stripeCustomerId) return json(400, { error: 'No subscription on this account.' });
-    const session = await stripe('billing_portal/sessions', { customer: profile.stripeCustomerId, return_url: origin });
+    const session = await stripe('billing_portal/sessions', { customer: profile.stripeCustomerId, return_url: `${origin}/app` });
     return json(200, { url: session.url });
   }
 

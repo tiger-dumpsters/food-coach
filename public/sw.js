@@ -1,7 +1,7 @@
 // Minimal service worker: caches the app shell so it opens instantly from the home
 // screen. Data always comes live from Firestore and the chat function.
-const CACHE = 'food-coach-v16';
-const SHELL = ['/', '/index.html', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/js/insights.js', '/manifest.webmanifest', '/icons/icon.svg'];
+const CACHE = 'hungerhush-v1';
+const SHELL = ['/app', '/styles.css', '/js/app.js', '/js/firebase-config.js', '/js/insights.js', '/manifest.webmanifest', '/icons/icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -25,7 +25,7 @@ self.addEventListener('fetch', (e) => {
         caches.open(CACHE).then((c) => c.put(e.request, copy));
         return res;
       })
-      .catch(() => caches.match(e.request).then((m) => m || caches.match('/index.html'))),
+      .catch(() => caches.match(e.request).then((m) => m || caches.match('/app'))),
   );
 });
 
@@ -33,15 +33,15 @@ self.addEventListener('fetch', (e) => {
 self.addEventListener('push', (e) => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Food Coach', {
+  e.waitUntil(self.registration.showNotification(d.title || 'HungerHush', {
     body: d.body || '', icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
-    tag: d.tag, data: { url: d.url || '/' },
+    tag: d.tag, data: { url: d.url || '/app' },
   }));
 });
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const url = (e.notification.data && e.notification.data.url) || '/';
+  const url = (e.notification.data && e.notification.data.url) || '/app';
   e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
     for (const c of list) if ('focus' in c) return c.focus();
     return self.clients.openWindow(url);

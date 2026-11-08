@@ -5,7 +5,7 @@
 import webpush from 'web-push';
 import { createHash } from 'node:crypto';
 
-const SUBJECT = process.env.VAPID_SUBJECT || 'https://food-coach.netlify.app';
+const SUBJECT = process.env.VAPID_SUBJECT || 'https://gethungerhush.com';
 let cached = null;
 
 export async function getVapid(db) {

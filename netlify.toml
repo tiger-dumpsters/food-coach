@@ -22,3 +22,21 @@
   [headers.values]
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
+
+# The landing page lives at /, the app at /app.
+# Old invite links (/?invite=CODE) still land in the app.
+[[redirects]]
+  from = "/"
+  to = "/app?invite=:code"
+  status = 302
+  query = { invite = ":code" }
+
+[[redirects]]
+  from = "/app"
+  to = "/app.html"
+  status = 200
+
+[[headers]]
+  for = "/app.html"
+  [headers.values]
+    Cache-Control = "no-cache"

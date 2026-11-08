@@ -304,7 +304,7 @@ async function api(path, body) {
 }
 
 // ---------- navigation ----------
-const TITLES = { chat: 'Coach', today: 'Today', trends: 'Trends', settings: 'You' };
+const TITLES = { chat: '<span class="wordmark">hunger<em>hush</em></span>', today: 'Today', trends: 'Patterns', settings: 'You' };
 document.querySelectorAll('.tabbar button').forEach((btn) => {
   btn.addEventListener('click', () => {
     if (btn.dataset.view === 'today' && state.view === 'today') state.viewDay = null; // tap again: back to today
@@ -319,7 +319,7 @@ function show(view) {
     if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
   for (const v of ['chat', 'today', 'trends', 'settings']) $(`#view-${v}`).hidden = v !== view;
-  $('#view-title').textContent = TITLES[view];
+  $('#view-title').innerHTML = TITLES[view];
   if (view === 'chat') scrollThread();
   if (view === 'today') renderToday();
   if (view === 'trends') renderTrends();
@@ -519,7 +519,7 @@ function msgHtml(m, at) {
   // A pasted log can produce dozens of cards; show a few and summarize the rest.
   const all = shown.map(cardHtml).filter(Boolean);
   const cards = all.length > 5
-    ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Trends</span></div>`
+    ? all.slice(0, 3).join('') + `<div class="card"><span class="k">+ ${all.length - 3} more entries · see Today and Patterns</span></div>`
     : all.join('');
   const body = blurWeights(fmtText(m.text));
   const thumb = m.thumb ? `<img class="thumb" src="${esc(m.thumb)}" alt="Meal photo">` : (m.photo ? '<span class="muted">[photo]</span><br>' : '');
@@ -989,7 +989,7 @@ function renderSettings() {
 
     <section class="panel" id="friends-panel">
       <h2>Invite friends</h2>
-      <p class="disclaimer">Send your link to anyone you'd like to try Food Coach. They sign in with Google and they're in. Their log is private to them.</p>
+      <p class="disclaimer">Send your link to anyone you'd like to try HungerHush. They sign in with Google and they're in. Their log is private to them.</p>
       <div id="friends-body" style="margin-top:10px">${state.friendInvite ? friendsBodyHtml() : '<div class="btn-row"><button class="btn small" id="friends-get">Get my invite link</button></div>'}</div>
       <div id="friends-error" class="error-inline" hidden></div>
     </section>
@@ -1017,7 +1017,7 @@ function renderSettings() {
 
     <section class="panel">
       <h2>About the numbers</h2>
-      <p class="disclaimer">Food Coach gives estimates, not measurements. Numbers come from your description, a photo or a label, and even packaged-food labels can legally be off by 20%. Estimates are built to be consistent, so the patterns hold up: what keeps you full, where the gaps are, how your week is trending. The more specific you are (amounts, brands, how it was cooked), the closer they get. Tap "Breakdown" on any meal to see what the coach assumed. This isn't medical advice; talk to a doctor or dietitian about medical conditions.</p>
+      <p class="disclaimer">HungerHush gives estimates, not measurements. Numbers come from your description, a photo, or a label, and even packaged-food labels can legally be off by 20%. Estimates are built to be consistent, so the patterns hold up: what keeps you full, where the gaps are, and how your week is trending. The more specific you are (amounts, brands, how it was cooked), the closer they get. Tap "Breakdown" on any meal to see what the coach assumed. This isn't medical advice; talk to a doctor or dietitian about medical conditions.</p>
     </section>
 
     <section class="panel">
@@ -1122,7 +1122,7 @@ function bindHousehold() {
     catch (e) { err(e.message); busy(ev.target, false); }
   });
   $('#hh-share')?.addEventListener('click', async () => {
-    const text = `Join my household in Food Coach: open ${location.origin}, sign in with Google, and enter code ${state.invite}`;
+    const text = `Join my household in HungerHush: open ${location.origin}/app, sign in with Google, and enter code ${state.invite} on the You tab.`;
     try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); err('Copied — paste it in a text.'); } } catch { /* cancelled */ }
   });
   $('#hh-join')?.addEventListener('click', async (ev) => {
@@ -1141,7 +1141,7 @@ function bindHousehold() {
 }
 
 // ---------- Invite friends ----------
-function inviteLink() { return `${location.origin}/?invite=${state.friendInvite.code}`; }
+function inviteLink() { return `${location.origin}/app?invite=${state.friendInvite.code}`; }
 function friendsBodyHtml() {
   const { left } = state.friendInvite;
   return `<div class="code code-link">${esc(inviteLink())}</div>
@@ -1157,9 +1157,9 @@ function bindFriends() {
   });
   $('#friends-share')?.addEventListener('click', async () => {
     const url = inviteLink();
-    const text = 'Try Food Coach with me. It tracks food by chat and learns what keeps you full.';
+    const text = 'Try HungerHush with me. You just text what you eat, and it learns what keeps you full.';
     try {
-      if (navigator.share) await navigator.share({ title: 'Food Coach', text, url });
+      if (navigator.share) await navigator.share({ title: 'HungerHush', text, url });
       else { await navigator.clipboard.writeText(`${text} ${url}`); err('Copied. Paste it in a text.'); }
     } catch { /* cancelled */ }
   });
@@ -1190,7 +1190,7 @@ async function refreshPushPanel(note = '') {
   } else if (!supported) {
     body = '<p class="muted" style="margin-top:8px">This browser doesn\'t support notifications. On iPhone, update to iOS 16.4 or later and use the home-screen app.</p>';
   } else if (Notification.permission === 'denied') {
-    body = '<p class="muted" style="margin-top:8px">Notifications are blocked for this app. On iPhone: Settings → Notifications → Food Coach → Allow Notifications. Then come back here.</p>';
+    body = '<p class="muted" style="margin-top:8px">Notifications are blocked for this app. On iPhone: Settings → Notifications → HungerHush → Allow Notifications. Then come back here.</p>';
   } else {
     const sub = Notification.permission === 'granted' ? await currentSubscription().catch(() => null) : null;
     body = sub
