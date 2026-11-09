@@ -49,6 +49,11 @@ const fakeDb = {
 mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => fakeDb, FieldValue } });
 const pushed = [];
 let vapidMade = 0;
+const fcmSent = [];
+mock.module('firebase-admin/messaging', { namedExports: { getMessaging: () => ({ send: async (m) => {
+  if (m.token.includes('dead')) { const e = new Error('gone'); e.code = 'messaging/registration-token-not-registered'; throw e; }
+  fcmSent.push(m); return 'msg-id';
+} }) } });
 mock.module('web-push', { defaultExport: {
   generateVAPIDKeys: () => { vapidMade++; return { publicKey: 'PUB' + vapidMade, privateKey: 'PRIV' + vapidMade }; },
   sendNotification: async (sub, payload) => {
@@ -652,4 +657,26 @@ test('delete account: log, chat, household seat, invites, flags, usage, subscrip
   // Sam's data untouched
   assert.ok(store.get('users/u3'));
   delete process.env.STRIPE_SECRET_KEY;
+});
+
+test('iPhone app notifications: register a token, send through FCM, drop dead tokens', async () => {
+  const { default: push } = await import('../netlify/functions/push.mjs');
+  const preq = (token, body) => new Request('http://x/push', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) });
+  assert.equal((await push(preq('alexa', { action: 'subscribe-native' }))).status, 400);
+  assert.equal((await push(preq('alexa', { action: 'subscribe-native', token: 'tok-live', platform: 'ios' }))).status, 200);
+  assert.equal((await push(preq('alexa', { action: 'subscribe-native', token: 'tok-dead' }))).status, 200);
+  assert.equal(store.get('users/u2').push_enabled, true);
+  const n = fcmSent.length;
+  const r = await (await push(preq('alexa', { action: 'test' }))).json();
+  assert.ok(r.sent >= 1);
+  assert.equal(fcmSent.length, n + 1);
+  assert.equal(fcmSent.at(-1).token, 'tok-live');
+  assert.equal(fcmSent.at(-1).notification.title, 'HungerHush');
+  const left = [...store.keys()].filter((k) => k.startsWith('users/u2/push/')).map((k) => store.get(k).fcmToken).filter(Boolean);
+  assert.deepEqual(left, ['tok-live']);
+  // token rotation replaces the old one; turning off removes it
+  await push(preq('alexa', { action: 'subscribe-native', token: 'tok-new', replaces: 'tok-live' }));
+  assert.deepEqual([...store.keys()].filter((k) => k.startsWith('users/u2/push/')).map((k) => store.get(k).fcmToken).filter(Boolean), ['tok-new']);
+  await push(preq('alexa', { action: 'unsubscribe-native', token: 'tok-new' }));
+  assert.equal([...store.keys()].filter((k) => k.startsWith('users/u2/push/') && store.get(k).fcmToken).length, 0);
 });

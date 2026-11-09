@@ -31,6 +31,25 @@ export default async (req) => {
     return json(200, { ok: true });
   }
 
+  // iPhone app: a Firebase Cloud Messaging token instead of a web push subscription.
+  if (body.action === 'subscribe-native') {
+    const token = typeof body.token === 'string' ? body.token.trim() : '';
+    if (!token || token.length > 4096) return json(400, { error: 'Bad token' });
+    if (typeof body.replaces === 'string') await subs.doc(subId('fcm:' + body.replaces)).delete();
+    await subs.doc(subId('fcm:' + token)).set({
+      fcmToken: token, platform: String(body.platform || 'ios').slice(0, 20), createdAt: FieldValue.serverTimestamp(),
+    });
+    await db.collection('users').doc(who.uid).set({ push_enabled: true }, { merge: true });
+    return json(200, { ok: true });
+  }
+
+  if (body.action === 'unsubscribe-native') {
+    if (typeof body.token === 'string') await subs.doc(subId('fcm:' + body.token)).delete();
+    const left = await subs.get();
+    if (!left.docs.length) await db.collection('users').doc(who.uid).set({ push_enabled: false }, { merge: true });
+    return json(200, { ok: true });
+  }
+
   if (body.action === 'unsubscribe') {
     if (body.subscription?.endpoint) await subs.doc(subId(body.subscription.endpoint)).delete();
     const left = await subs.get();

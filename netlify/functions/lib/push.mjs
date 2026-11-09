@@ -26,6 +26,17 @@ export function subId(endpoint) {
 }
 
 // Send to every device the user turned notifications on for. Dead subscriptions are removed.
+// Phone-app devices (iPhone) get notifications through Firebase Cloud Messaging.
+async function sendNative(token, { title, body, url, tag }) {
+  const { getMessaging } = await import('firebase-admin/messaging');
+  return getMessaging().send({
+    token,
+    notification: { title, body: String(body || '').slice(0, 240) },
+    data: { url: String(url || '/app'), tag: String(tag || '') },
+    apns: { payload: { aps: { sound: 'default', 'thread-id': String(tag || 'hungerhush') } } },
+  });
+}
+
 export async function sendToUser(db, uid, { title, body, url = '/', tag }) {
   const subs = await db.collection('users').doc(uid).collection('push').get();
   if (!subs.docs.length) return 0;
@@ -33,8 +44,17 @@ export async function sendToUser(db, uid, { title, body, url = '/', tag }) {
   const payload = JSON.stringify({ title, body: String(body || '').slice(0, 240), url, tag });
   let sent = 0;
   await Promise.all(subs.docs.map(async (d) => {
+    const sub = d.data();
+    if (sub.fcmToken) {
+      try { await sendNative(sub.fcmToken, { title, body, url, tag }); sent++; }
+      catch (err) {
+        if (/registration-token-not-registered|invalid-registration-token|invalid-argument/.test(err.code || '')) await d.ref.delete();
+        else console.error('native push failed', err.code || err.message);
+      }
+      return;
+    }
     try {
-      await webpush.sendNotification(d.data().subscription, payload, {
+      await webpush.sendNotification(sub.subscription, payload, {
         vapidDetails: { subject: SUBJECT, publicKey, privateKey }, TTL: 6 * 3600,
       });
       sent++;

@@ -14,5 +14,15 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@capacitor-firebase/authentication": "^8.6.0",
+    "@capacitor-firebase/messaging": "^8.6.0",
+    "@capacitor/cli": "^8.6.0",
+    "@capacitor/core": "^8.6.0",
+    "@capacitor/ios": "^8.6.0",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
+    "firebase": "^12.19.0"
   }
 }

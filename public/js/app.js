@@ -1,7 +1,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js';
 import {
-  getAuth, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signInWithRedirect,
-  getRedirectResult, signOut,
+  getAuth, onAuthStateChanged, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect,
+  getRedirectResult, signInWithCredential, signOut as webSignOut,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import {
   getFirestore, doc, collection, query, where, orderBy, limit, onSnapshot, getDocs,
@@ -13,6 +13,23 @@ import { hungerHeatmap, weakSpots, keepsYouFull, BUCKETS, WEEKDAYS, bucketRange 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
 const db = getFirestore(fb);
+
+// ---------- native (iPhone app) ----------
+// Inside the App Store app, Capacitor injects window.Capacitor and its native plugins.
+const CAP = window.Capacitor;
+const NATIVE = !!CAP?.isNativePlatform?.();
+const IOS_APP = NATIVE && CAP.getPlatform?.() === 'ios';
+function plugin(name) { return CAP?.Plugins?.[name] || CAP?.registerPlugin?.(name); }
+if (NATIVE) {
+  document.documentElement.classList.add('native');
+  plugin('StatusBar')?.setStyle?.({ style: 'DARK' }).catch?.(() => {});
+}
+
+// Sign out of Firebase and, in the app, the native Google/Apple session too.
+async function signOut(a) {
+  if (NATIVE) await plugin('FirebaseAuthentication')?.signOut?.().catch(() => {});
+  return webSignOut(a);
+}
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 const $ = (sel) => document.querySelector(sel);
@@ -99,9 +116,35 @@ function fmtText(t) {
 }
 
 // ---------- auth ----------
+// In the app, Google and Apple sign-in run natively (Google blocks its web sign-in inside
+// apps), and the resulting credential signs in to Firebase here.
+async function nativeSignIn(which) {
+  const FA = plugin('FirebaseAuthentication');
+  const r = which === 'apple' ? await FA.signInWithApple() : await FA.signInWithGoogle();
+  const c = r.credential || {};
+  const cred = which === 'apple'
+    ? new OAuthProvider('apple.com').credential({ idToken: c.idToken, rawNonce: c.nonce })
+    : GoogleAuthProvider.credential(c.idToken, c.accessToken);
+  await signInWithCredential(auth, cred);
+}
+function showSigninError(err) {
+  if (/cancel|closed|1001/i.test(String(err?.message || err?.code || ''))) return; // they backed out
+  $('#signin-error').textContent = 'Sign-in failed: ' + (err.message || err.code);
+  $('#signin-error').hidden = false;
+}
+if (IOS_APP) $('#signin-apple').hidden = false;
+$('#signin-apple').addEventListener('click', async () => {
+  $('#signin-error').hidden = true;
+  try { await nativeSignIn('apple'); } catch (err) { showSigninError(err); }
+});
+
 $('#signin-btn').addEventListener('click', async () => {
   const provider = new GoogleAuthProvider();
   $('#signin-error').hidden = true;
+  if (NATIVE) {
+    try { await nativeSignIn('google'); } catch (err) { showSigninError(err); }
+    return;
+  }
   try {
     await signInWithPopup(auth, provider);
   } catch (err) {
@@ -199,12 +242,12 @@ function planHtml() {
       : pl.cancelAtPeriodEnd ? `Plus ends ${date}. You'll keep your log on the free plan.`
       : `Plus${date ? ` · renews ${date}` : ''}`;
     return `<section class="panel"><h2>Your plan</h2><p class="sub">${esc(line)}</p>
-      ${pl.paid ? '<div class="btn-row"><button class="btn small" id="plan-manage">Manage subscription</button></div>' : ''}</section>`;
+      ${pl.paid && !NATIVE ? '<div class="btn-row"><button class="btn small" id="plan-manage">Manage subscription</button></div>' : ''}</section>`;
   }
   return `<section class="panel plan-upsell"><h2>Your plan: Free</h2>
     <p class="disclaimer">Free covers chat logging, hunger patterns and trends, up to ${pl.limits.messagesPerDay} messages a day.</p>
     <ul class="plan-perks"><li>Snap a photo of a meal and it's logged</li><li>Household: shared pantry and shared meals with your partner (they join free)</li><li>Deeper answers when you ask why or what to eat</li><li>Up to 150 messages a day</li></ul>
-    ${pl.billingReady ? `<button class="btn primary" id="plan-upgrade">Upgrade to Plus${pl.priceLabel ? ` · ${esc(pl.priceLabel)}` : ''}</button>` : '<p class="sub">Plus is coming soon.</p>'}
+    ${NATIVE ? '<p class="sub">Upgrading inside the app is coming soon.</p>' : pl.billingReady ? `<button class="btn primary" id="plan-upgrade">Upgrade to Plus${pl.priceLabel ? ` · ${esc(pl.priceLabel)}` : ''}</button>` : '<p class="sub">Plus is coming soon.</p>'}
   </section>`;
 }
 
@@ -1027,7 +1070,7 @@ function renderSettings() {
         <button class="btn small" id="redo">Redo setup with coach</button>
         <button class="btn small danger" id="signout">Sign out</button>
       </div>
-      <p class="sub" style="margin-top:12px">Install: in Safari tap Share → Add to Home Screen.</p>
+      ${NATIVE ? '' : '<p class="sub" style="margin-top:12px">Install: in Safari tap Share → Add to Home Screen.</p>'}
       <p class="sub legal-links"><a href="/support" target="_blank" rel="noopener">Help</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy</a> · <a href="/terms" target="_blank" rel="noopener">Terms</a></p>
     </section>
 
@@ -1216,6 +1259,7 @@ async function currentSubscription() {
 async function refreshPushPanel(note = '') {
   const el = $('#push-panel');
   if (!el) return;
+  if (NATIVE) return refreshNativePush(el, note);
   const head = '<h2>Notifications</h2><p class="disclaimer">Monday and holiday notes from your coach, delivered like a text. Nothing else for now.</p>';
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -1245,6 +1289,55 @@ async function refreshPushPanel(note = '') {
     const sub = await currentSubscription().catch(() => null);
     if (sub) { await api('push', { action: 'unsubscribe', subscription: sub.toJSON() }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
     refreshPushPanel('Turned off for this device.');
+  });
+}
+
+// ---------- push in the iPhone app (APNs through Firebase Cloud Messaging) ----------
+const PUSH_HEAD = '<h2>Notifications</h2><p class="disclaimer">Monday and holiday notes from your coach, delivered like a text. Nothing else for now.</p>';
+async function refreshNativePush(el, note) {
+  const FM = plugin('FirebaseMessaging');
+  let perm = 'prompt';
+  try { perm = (await FM.checkPermissions()).receive; } catch {}
+  const on = perm === 'granted' && localStorage.getItem('nativePushToken');
+  const body = perm === 'denied'
+    ? '<p class="muted" style="margin-top:8px">Notifications are off for HungerHush. Turn them on in Settings → Notifications → HungerHush, then come back here.</p>'
+    : on
+      ? `<p class="saved-note" style="margin-top:8px">On for this phone.</p>
+         <div class="btn-row" style="margin-top:8px"><button class="btn small" id="push-test">Send a test</button><button class="btn small" id="push-off">Turn off</button></div>`
+      : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="push-on" style="width:auto">Turn on notifications</button></div>';
+  el.innerHTML = PUSH_HEAD + body + (note ? `<p class="sub" style="margin-top:8px">${esc(note)}</p>` : '');
+  $('#push-on')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const { receive } = await FM.requestPermissions();
+      if (receive !== 'granted') return refreshPushPanel('No problem. You can turn them on any time.');
+      const { token } = await FM.getToken();
+      await api('push', { action: 'subscribe-native', token, platform: CAP.getPlatform() });
+      try { localStorage.setItem('nativePushToken', token); } catch {}
+      refreshPushPanel('Notifications are on. Tap "Send a test" to check.');
+    } catch (err) { refreshPushPanel(`Couldn't turn on notifications: ${err.message}`); }
+  });
+  $('#push-test')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { const r = await api('push', { action: 'test' }); refreshPushPanel(r.sent ? 'Sent. It should arrive in a few seconds.' : 'Nothing was sent. Try turning notifications off and on.'); }
+    catch (err) { refreshPushPanel(`Couldn't send: ${err.message}`); }
+  });
+  $('#push-off')?.addEventListener('click', async () => {
+    const token = localStorage.getItem('nativePushToken');
+    if (token) await api('push', { action: 'unsubscribe-native', token }).catch(() => {});
+    await FM.deleteToken().catch(() => {});
+    try { localStorage.removeItem('nativePushToken'); } catch {}
+    refreshPushPanel('Turned off for this phone.');
+  });
+}
+if (NATIVE) {
+  // Tapping a notification opens the chat.
+  plugin('FirebaseMessaging')?.addListener?.('notificationActionPerformed', () => { if (state.user) show('chat'); });
+  // Tokens can rotate; keep the server's copy current.
+  plugin('FirebaseMessaging')?.addListener?.('tokenReceived', ({ token }) => {
+    const old = localStorage.getItem('nativePushToken');
+    if (!old || old === token || !state.user) return;
+    api('push', { action: 'subscribe-native', token, platform: CAP.getPlatform(), replaces: old }).then(() => localStorage.setItem('nativePushToken', token)).catch(() => {});
   });
 }
 
@@ -1282,6 +1375,6 @@ async function exportCsv() {
 }
 
 // ---------- PWA ----------
-if ('serviceWorker' in navigator) {
+if ('serviceWorker' in navigator && !NATIVE) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }

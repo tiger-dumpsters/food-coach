@@ -1,0 +1,62 @@
+{
+  "appId": "com.gethungerhush.app",
+  "appName": "HungerHush",
+  "webDir": "public",
+  "server": {
+    "url": "https://gethungerhush.com/app",
+    "allowNavigation": [
+      "gethungerhush.com",
+      "*.gethungerhush.com",
+      "food-app-55f7d.firebaseapp.com",
+      "accounts.google.com",
+      "checkout.stripe.com",
+      "billing.stripe.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "never",
+    "backgroundColor": "#1E1830",
+    "scheme": "HungerHush"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 800,
+      "backgroundColor": "#1E1830",
+      "showSpinner": false
+    },
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": [
+        "google.com",
+        "apple.com"
+      ]
+    },
+    "FirebaseMessaging": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    }
+  },
+  "experimental": {
+    "ios": {
+      "spm": {
+        "swiftToolsVersion": "6.1",
+        "packageOptions": {
+          "@capacitor-firebase/authentication": {
+            "symlink": true
+          },
+          "@capacitor-firebase/messaging": {
+            "symlink": true
+          }
+        },
+        "packageTraits": {
+          "@capacitor-firebase/authentication": [
+            "Google"
+          ]
+        }
+      }
+    }
+  }
+}

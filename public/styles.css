@@ -361,3 +361,7 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); fon
 .legal-links a { color: var(--ink-2); }
 .error.notice { color: var(--ink-2); }
 .fine a { color: var(--ink-2); }
+
+/* Sign in with Apple (iPhone app only), per Apple's white-on-dark style */
+.btn.apple { background: #fff; color: #000; border: 0; font-weight: 600; gap: 8px; margin-bottom: 10px; display: inline-flex; align-items: center; justify-content: center; width: 100%; }
+.btn.apple svg { margin-top: -2px; }

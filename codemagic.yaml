@@ -1,0 +1,64 @@
+# Builds the HungerHush iPhone app and sends it to TestFlight.
+# Start a build by hand in Codemagic (Start new build -> branch -> "iOS: TestFlight").
+#
+# Needs two environment variable groups in Codemagic (app settings -> Environment variables):
+#   app_store: APP_STORE_CONNECT_ISSUER_ID, APP_STORE_CONNECT_KEY_IDENTIFIER,
+#              APP_STORE_CONNECT_PRIVATE_KEY (the .p8 file's contents), CERTIFICATE_PRIVATE_KEY
+#   firebase:  GOOGLE_SERVICE_INFO_PLIST (the GoogleService-Info.plist file's contents)
+
+workflows:
+  ios-testflight:
+    name: "iOS: TestFlight"
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    environment:
+      groups:
+        - app_store
+        - firebase
+      node: 22
+      xcode: latest
+      vars:
+        BUNDLE_ID: com.gethungerhush.app
+    scripts:
+      - name: Install packages
+        script: npm ci
+      - name: Firebase config for iOS
+        script: |
+          set -e
+          printf '%s' "$GOOGLE_SERVICE_INFO_PLIST" > ios/App/App/GoogleService-Info.plist
+          REV=$(/usr/libexec/PlistBuddy -c "Print :REVERSED_CLIENT_ID" ios/App/App/GoogleService-Info.plist)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleURLTypes:0:CFBundleURLSchemes:0 $REV" ios/App/App/Info.plist
+          echo "Google sign-in URL scheme: $REV"
+      - name: Sync Capacitor
+        script: npx cap sync ios
+      - name: Signing (certificate + App Store profile)
+        script: |
+          set -e
+          keychain initialize
+          app-store-connect fetch-signing-files "$BUNDLE_ID" --type IOS_APP_STORE --create
+          keychain add-certificates
+          xcode-project use-profiles
+      - name: Build number
+        script: |
+          cd ios/App
+          agvtool new-version -all $((BUILD_NUMBER + 1))
+      - name: Build the app
+        script: |
+          xcode-project build-ipa \
+            --project "ios/App/App.xcodeproj" \
+            --scheme "App"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      email:
+        recipients:
+          - will@tigerdumpsters.com
+        notify:
+          success: true
+          failure: true
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_PRIVATE_KEY
+        key_id: $APP_STORE_CONNECT_KEY_IDENTIFIER
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        submit_to_testflight: true
