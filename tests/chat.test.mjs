@@ -38,7 +38,8 @@ mock.module('firebase-admin/app', { namedExports: { initializeApp() {}, cert: ()
 const USERS = { good: { uid: 'u1', email: 'will@tigerdumpsters.com', name: 'Will Stewart' }, alexa: { uid: 'u2', email: 'alexa@example.com', name: 'Alexa Stewart' },
   sam: { uid: 'u3', email: 'sam@example.com', name: 'Sam Lee' }, jo: { uid: 'u4', email: 'jo@example.com', name: 'Jo Park' }, kim: { uid: 'u5', email: 'kim@example.com', name: 'Kim Ross' } };
 const deletedAuth = [];
-mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; }, deleteUser: async (uid) => { deletedAuth.push(uid); } }) } });
+const lookedUp = [];
+mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; }, deleteUser: async (uid) => { deletedAuth.push(uid); }, getUserByEmail: async (e) => { lookedUp.push(e); const u = Object.values(USERS).find((x) => x.email === e); if (!u) throw new Error('no user'); return u; } }) } });
 const fakeDb = {
   collection: (n) => colRef(n),
   async runTransaction(fn) {
@@ -212,8 +213,15 @@ test('out of credit gets a clear message', async () => {
   globalThis.fetch = async () => ({ ok: false, status: 400, text: async () => 'Your credit balance is too low to access the Anthropic API.' });
   const r = await handler(req('good', { text: 'why am I hungry?', tz: 'America/New_York' }));
   const j = await r.json();
+  assert.match(j.reply, /short break/);
+  assert.doesNotMatch(j.reply, /API|Admin|console/);
+  assert.ok(lookedUp.includes('will@tigerdumpsters.com'), 'admins alerted');
+  assert.ok(store.get('config/alerts')['HungerHush is out of API credit']);
+  // a second failure within the hour doesn't alert again
+  const before = lookedUp.length;
+  await handler(req('good', { text: 'and now?', tz: 'America/New_York' }));
   globalThis.fetch = realFetch;
-  assert.match(j.reply, /out of API credit/);
+  assert.equal(lookedUp.length, before);
 });
 
 test('reply that claims "logged" without a tool call gets corrected', async () => {

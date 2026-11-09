@@ -11,6 +11,7 @@ import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
 import { limitsFor, planFor, UPGRADE } from './lib/plans.mjs';
 import { weakSpots, keepsYouFull } from '../../public/js/insights.js';
+import { sendToUser } from './lib/push.mjs';
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const MODEL_SMART = process.env.MODEL_SMART || 'claude-sonnet-5-5';
@@ -30,6 +31,22 @@ function json(status, body) {
 }
 
 // Local calendar info for the user's timezone.
+// Tell the people running HungerHush (ADMIN_EMAILS, else ALLOWED_EMAILS) about an outage,
+// by phone notification, at most once an hour.
+export async function alertAdmins(db, auth, title, body) {
+  const ref = db.collection('config').doc('alerts');
+  const last = (await ref.get()).data()?.[title] || 0;
+  if (Date.now() - last < 60 * 60 * 1000) return 0;
+  await ref.set({ [title]: Date.now() }, { merge: true });
+  const emails = (process.env.ADMIN_EMAILS || process.env.ALLOWED_EMAILS || '').split(',').map((e) => e.trim()).filter(Boolean);
+  let sent = 0;
+  for (const email of emails) {
+    try { const u = await auth.getUserByEmail(email); sent += await sendToUser(db, u.uid, { title, body, url: '/app', tag: 'admin-alert' }); }
+    catch (e) { console.error('alert', email, e.message); }
+  }
+  return sent;
+}
+
 export function makeClock(tz, now = new Date()) {
   let zone = tz;
   try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); } catch { zone = 'America/New_York'; }
@@ -146,7 +163,7 @@ function historyToMessages(history, clock) {
 export default async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
 
-  const { db } = admin();
+  const { db, auth } = admin();
   const who = await verify(req);
   if (who.error) return json(who.status, { error: who.error });
   const { uid, email } = who;
@@ -354,8 +371,9 @@ export default async (req) => {
     replyText = replyText || (entries.length
       ? ''
       : outOfCredit
-        ? "I'm out of API credit, so I couldn't log that. (Admin: top up at console.anthropic.com → Billing.)"
+        ? "The coach is taking a short break, so I couldn't log that. Your message is still here; please send it again in a little while. Sorry about that!"
         : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
+    if (outOfCredit) await alertAdmins(db, auth, 'HungerHush is out of API credit', 'The coach can\'t answer anyone. Top up at console.anthropic.com → Billing.').catch((e) => console.error('alert', e.message));
   }
 
   if (partial) {
