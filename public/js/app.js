@@ -4,8 +4,9 @@ import {
   getRedirectResult, signInWithCredential, signOut as webSignOut,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import {
-  getFirestore, doc, collection, query, where, orderBy, limit, onSnapshot, getDocs,
-  setDoc, updateDoc,
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  terminate, clearIndexedDbPersistence,
+  doc, collection, query, where, orderBy, limit, onSnapshot, getDocs, setDoc, updateDoc,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 import { identify } from './monitoring.js';
@@ -13,7 +14,11 @@ import { hungerHeatmap, weakSpots, keepsYouFull, BUCKETS, WEEKDAYS, bucketRange 
 
 const fb = initializeApp(firebaseConfig);
 const auth = getAuth(fb);
-const db = getFirestore(fb);
+// Keep a copy of the person's data on the device, so the app opens straight to their
+// chat and day (then catches up with the server), and works on a flaky connection.
+let db;
+try { db = initializeFirestore(fb, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
+catch { db = getFirestore(fb); }
 
 // ---------- native (iPhone app) ----------
 // Inside the App Store app, Capacitor injects window.Capacitor and its native plugins.
@@ -27,9 +32,15 @@ if (NATIVE) {
 }
 
 // Sign out of Firebase and, in the app, the native Google/Apple session too.
-async function signOut(a) {
+async function signOut(a, { wipe = true } = {}) {
   if (NATIVE) await plugin('FirebaseAuthentication')?.signOut?.().catch(() => {});
-  return webSignOut(a);
+  try { localStorage.removeItem('hh-access'); } catch {}
+  await webSignOut(a);
+  // Don't leave someone's log on a shared device: clear the local copy, then reload.
+  if (wipe) {
+    try { await terminate(db); await clearIndexedDbPersistence(db); } catch {}
+    location.reload();
+  }
 }
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
@@ -158,6 +169,15 @@ $('#signin-btn').addEventListener('click', async () => {
   }
 });
 getRedirectResult(auth).catch(() => {});
+// After deleting an account the app reloads; say goodbye on the sign-in screen.
+try {
+  if (sessionStorage.getItem('hh-deleted')) {
+    sessionStorage.removeItem('hh-deleted');
+    const e = $('#signin-error');
+    e.textContent = 'Your account and everything in it has been deleted. Take care.';
+    e.hidden = false; e.classList.add('notice');
+  }
+} catch {}
 
 // Invite links look like /?invite=CODE. Keep the code through the Google sign-in.
 (() => {
@@ -183,6 +203,17 @@ onAuthStateChanged(auth, async (user) => {
   $('#gate').hidden = true;
   $('#app').hidden = true;
   if (!user) return;
+  // Someone already let in on this device opens straight to the app; access is
+  // re-checked in the background.
+  let known = null;
+  try { known = localStorage.getItem('hh-access'); } catch {}
+  if (known === user.uid && !pendingInvite()) {
+    enterApp(user);
+    api('access', { action: 'status' }).then((r) => {
+      if (r.access === false && state.user === user) { try { localStorage.removeItem('hh-access'); } catch {} location.reload(); }
+    }).catch(() => {});
+    return;
+  }
   let access = false;
   try {
     access = (await api('access', { action: 'status' })).access;
@@ -196,6 +227,7 @@ onAuthStateChanged(auth, async (user) => {
 });
 
 function enterApp(user) {
+  try { localStorage.setItem('hh-access', user.uid); } catch {}
   $('#gate').hidden = true;
   $('#app').hidden = false;
   startSession(user);
@@ -1210,10 +1242,8 @@ function bindDelete() {
       await api('account', { action: 'delete', confirm: 'DELETE' });
       state.deleted = true;
       state.unsub.forEach((u) => u()); state.unsub = [];
-      await signOut(auth).catch(() => {});
-      const e = $('#signin-error');
-      e.textContent = 'Your account and everything in it has been deleted. Take care.';
-      e.hidden = false; e.classList.add('notice');
+      try { sessionStorage.setItem('hh-deleted', '1'); } catch {}
+      await signOut(auth).catch(() => location.reload());
     } catch (err) {
       const e = $('#del-error'); e.textContent = err.message; e.hidden = false;
       go.disabled = false; go.textContent = 'Delete forever';

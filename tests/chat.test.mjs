@@ -34,7 +34,7 @@ function docRef(path) {
 }
 function colRef(path, filters = [], order = null, lim = null) {
   return {
-    doc: (id) => docRef(`${path}/${id}`),
+    doc: (id) => docRef(`${path}/${id ?? 'id' + (++idc)}`),
     async add(data) { const id = 'id' + (++idc); store.set(`${path}/${id}`, data); return docRef(`${path}/${id}`); },
     where: (f, op, v) => colRef(path, [...filters, [f, op, v]], order, lim),
     orderBy: (f, dir) => colRef(path, filters, [f, dir], lim),
@@ -812,4 +812,24 @@ test('monitoring: errors reach Sentry without anyone\'s chat text; repeated fail
   const h = await health();
   assert.equal(h.status, 200);
   assert.deepEqual((await h.json()).checks, { keys: true, database: true });
+});
+
+test('speed: a simple log that comes back with its reply takes one coach call, a question still gets two', async () => {
+  const logResp = () => ({ stop_reason: 'tool_use', content: [
+    { type: 'text', text: 'Nice, oatmeal is a great start.' },
+    { type: 'tool_use', id: 't' + Math.random(), name: 'log_meal', input: { meal: 'breakfast', description: 'oatmeal', items: [{ name: 'oatmeal', calories: 150, protein_g: 5, fiber_g: 4, fat_g: 3, carbs_g: 27, processing: 'whole' }] } },
+  ] });
+  queue.length = 0;
+  queue.push(logResp());
+  let n = calls.length;
+  const j = await (await handler(req('alexa', { text: 'oatmeal for breakfast', tz: 'America/New_York' }))).json();
+  assert.equal(calls.length - n, 1, 'one call');
+  assert.equal(j.reply, 'Nice, oatmeal is a great start.');
+  assert.equal(j.entries.length, 1);
+  // a question needs the coach to see the saved result first
+  queue.push(logResp(), { stop_reason: 'end_turn', content: [{ type: 'text', text: 'Logged. Want ideas for lunch?' }] });
+  n = calls.length;
+  await handler(req('alexa', { text: 'had oatmeal, what should I eat for lunch?', tz: 'America/New_York' }));
+  assert.equal(calls.length - n, 2, 'two calls');
+  queue.length = 0;
 });

@@ -12,6 +12,15 @@
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon-192.png" type="image/png">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <!-- Start downloading all the app's code at once instead of one file after another -->
+  <link rel="modulepreload" href="/js/app.js">
+  <link rel="modulepreload" href="/js/firebase-config.js">
+  <link rel="modulepreload" href="/js/insights.js">
+  <link rel="modulepreload" href="/js/monitoring.js">
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js" crossorigin>
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js" crossorigin>
+  <link rel="modulepreload" href="https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js" crossorigin>
+  <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,500;0,9..144,600;1,9..144,500;1,9..144,600&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">

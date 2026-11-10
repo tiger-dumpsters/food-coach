@@ -168,40 +168,44 @@ const handler = async (req) => {
   const thumb = typeof body.thumb === 'string' && body.thumb.startsWith('data:image/') && body.thumb.length < 60_000 ? body.thumb : null;
   if (!text && !image) return json(400, { error: 'Empty message' });
 
-  // A retry after a dropped connection carries the same id: don't answer twice.
   const cid = typeof body.cid === 'string' ? body.cid.slice(0, 40) : null;
-  if (cid) {
-    const dup = await db.collection('users').doc(uid).collection('messages').where('cid', '==', cid).limit(1).get();
-    if (dup.docs.length) return json(200, { duplicate: true });
-  }
-
   const clock = makeClock(body.tz);
   const userRef = db.collection('users').doc(uid);
-  const profileSnap = await userRef.get();
-  const limits = limitsFor(profileSnap.exists ? profileSnap.data() : null);
-  if (image && !limits.photos) return json(402, { error: UPGRADE.photos, code: 'upgrade', feature: 'photos' });
-  const msgCount = await underDailyCap(db, uid, capDay(), limits.messagesPerDay);
-  if (!msgCount) {
-    const free = planFor(profileSnap.exists ? profileSnap.data() : null) === 'free';
-    return json(429, { error: free ? UPGRADE.cap(limits.messagesPerDay) : "You've hit today's message limit. It resets tomorrow.", code: free ? 'upgrade' : 'cap' });
-  }
   const weekStart = dayMinus(clock.day, 13); // 2 weeks: hunger patterns need repeats
 
-  const [histSnap, mealsSnap, workoutsSnap, checkinsSnap, weightsSnap] = await Promise.all([
+  // Everything that doesn't depend on anything else is fetched at once.
+  const [dupSnap, profileSnap, budgetOk, histSnap, mealsSnap, workoutsSnap, checkinsSnap, weightsSnap] = await Promise.all([
+    // A retry after a dropped connection carries the same id: don't answer twice.
+    cid ? userRef.collection('messages').where('cid', '==', cid).limit(1).get() : null,
+    userRef.get(),
+    spendAllowed(db),
     userRef.collection('messages').orderBy('createdAt', 'desc').limit(20).get(),
     userRef.collection('meals').where('day', '>=', weekStart).get(),
     userRef.collection('workouts').where('day', '>=', weekStart).get(),
     userRef.collection('checkins').where('day', '>=', weekStart).get(),
     userRef.collection('weighins').orderBy('at', 'desc').limit(7).get(),
   ]);
+  if (dupSnap?.docs.length) return json(200, { duplicate: true });
 
   const profile = profileSnap.exists ? profileSnap.data() : null;
-  if (!profileSnap.exists) {
-    await userRef.set({ email, createdAt: FieldValue.serverTimestamp(), onboarded: false });
+  const limits = limitsFor(profile);
+  if (image && !limits.photos) return json(402, { error: UPGRADE.photos, code: 'upgrade', feature: 'photos' });
+  const [msgCount, household] = await Promise.all([
+    underDailyCap(db, uid, capDay(), limits.messagesPerDay),
+    loadHousehold(db, profile?.householdId, uid),
+  ]);
+  if (!msgCount) {
+    const free = planFor(profile) === 'free';
+    return json(429, { error: free ? UPGRADE.cap(limits.messagesPerDay) : "You've hit today's message limit. It resets tomorrow.", code: free ? 'upgrade' : 'cap' });
   }
-  // Remember the user's timezone and last activity (used for morning notes).
-  userRef.set({ tz: clock.tz, lastActiveAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => {});
-  const household = await loadHousehold(db, profile?.householdId, uid);
+
+  // New profile on first message; remember time zone and last activity (morning notes).
+  const background = [
+    userRef.set(profileSnap.exists
+      ? { tz: clock.tz, lastActiveAt: FieldValue.serverTimestamp() }
+      : { email, createdAt: FieldValue.serverTimestamp(), onboarded: false, tz: clock.tz, lastActiveAt: FieldValue.serverTimestamp() },
+    { merge: true }).catch((e) => console.error('profile touch', e.message)),
+  ];
   const me = { uid, name: firstName(profile?.name, email) };
 
   const meals = rows(mealsSnap, clock.tz).sort((a, b) => (a.at || 0) - (b.at || 0));
@@ -233,11 +237,13 @@ const handler = async (req) => {
     keepsFull: keepsYouFull(meals, checkins),
   };
 
-  // Save the user's message first so entries can point back to it.
-  const userMsgRef = await userRef.collection('messages').add({
+  // Save the user's message (entries point back to it). Its ID exists right away, so
+  // the coach call doesn't have to wait for the write.
+  const userMsgRef = userRef.collection('messages').doc();
+  background.push(userMsgRef.set({
     role: 'user', text, createdAt: FieldValue.serverTimestamp(), day: clock.day, ...(cid ? { cid } : {}),
     ...(image ? { photo: true } : {}), ...(thumb ? { thumb } : {}),
-  });
+  }));
 
   const history = rows(histSnap, clock.tz).reverse();
   const messages = [...historyToMessages(history, clock)];
@@ -276,7 +282,7 @@ const handler = async (req) => {
   const spendWrites = [];
 
   try {
-    if (!(await spendAllowed(db))) throw Object.assign(new Error('daily spend limit reached'), { code: 'budget' });
+    if (!budgetOk) throw Object.assign(new Error('daily spend limit reached'), { code: 'budget' });
     const started = Date.now();
     for (let round = 0; round < MAX_ROUNDS; round++) {
       let resp;
@@ -296,6 +302,7 @@ const handler = async (req) => {
 
       const textParts = resp.content.filter(c => c.type === 'text').map(c => c.text.trim()).filter(Boolean);
       if (textParts.length) replyText = textParts.join('\n');
+      const repliedAlready = textParts.length > 0;
 
       let toolUses = resp.content.filter(c => c.type === 'tool_use');
       if (!toolUses.length) {
@@ -346,6 +353,11 @@ const handler = async (req) => {
           console.error('totals refresh failed', err.message);
         }
       }
+      // Fast path: the coach already wrote its reply alongside the saves, everything
+      // saved fine, and the person didn't ask a question -- no need for a second call.
+      if (repliedAlready && !cutOff && !/\?/.test(text) && outcomes.every((o) => o.entry && !o.block.is_error)) {
+        break;
+      }
       if (cutOff) {
         results.push({ type: 'text', text: 'Your last reply was cut off. Continue logging from where you stopped (skip anything already logged above), then reply briefly.' });
       }
@@ -374,7 +386,7 @@ const handler = async (req) => {
     if (outOfCredit) await alertAdmins(db, auth, 'HungerHush is out of API credit', 'The coach can\'t answer anyone. Top up at console.anthropic.com → Billing.').catch((e) => console.error('alert', e.message));
   }
 
-  await Promise.all(spendWrites);
+  await Promise.all([...spendWrites, ...background]);
 
   if (partial) {
     replyText = `${replyText ? replyText + '\n\n' : ''}That was a lot — I logged ${entries.length} entries so far. Paste the rest (from where it stops) and I'll keep going.`;
