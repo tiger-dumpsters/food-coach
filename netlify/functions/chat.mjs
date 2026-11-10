@@ -12,7 +12,8 @@ import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
 import { limitsFor, planFor, UPGRADE } from './lib/plans.mjs';
 import { weakSpots, keepsYouFull } from '../../public/js/insights.js';
-import { sendToUser } from './lib/push.mjs';
+import { monitored, alertAdmins, reportError, countError } from './lib/monitor.mjs';
+export { alertAdmins };
 
 const MODEL_FAST = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const MODEL_SMART = process.env.MODEL_SMART || 'claude-sonnet-5-5';
@@ -32,22 +33,6 @@ function json(status, body) {
 }
 
 // Local calendar info for the user's timezone.
-// Tell the people running HungerHush (ADMIN_EMAILS, else ALLOWED_EMAILS) about an outage,
-// by phone notification, at most once an hour.
-export async function alertAdmins(db, auth, title, body) {
-  const ref = db.collection('config').doc('alerts');
-  const last = (await ref.get()).data()?.[title] || 0;
-  if (Date.now() - last < 60 * 60 * 1000) return 0;
-  await ref.set({ [title]: Date.now() }, { merge: true });
-  const emails = (process.env.ADMIN_EMAILS || process.env.ALLOWED_EMAILS || '').split(',').map((e) => e.trim()).filter(Boolean);
-  let sent = 0;
-  for (const email of emails) {
-    try { const u = await auth.getUserByEmail(email); sent += await sendToUser(db, u.uid, { title, body, url: '/app', tag: 'admin-alert' }); }
-    catch (e) { console.error('alert', email, e.message); }
-  }
-  return sent;
-}
-
 export function makeClock(tz, now = new Date()) {
   let zone = tz;
   try { new Intl.DateTimeFormat('en-US', { timeZone: zone }); } catch { zone = 'America/New_York'; }
@@ -161,7 +146,7 @@ function historyToMessages(history, clock) {
   return out;
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
 
   const { db, auth } = admin();
@@ -372,7 +357,6 @@ export default async (req) => {
       }
     }
   } catch (err) {
-    console.error(err);
     errorDetail = err.message;
     failed = !entries.length;
     const outOfCredit = /credit balance/i.test(err.message);
@@ -383,6 +367,10 @@ export default async (req) => {
         ? BUDGET_MESSAGE
         : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
     if (overBudget) await alertAdmins(db, auth, 'HungerHush hit its daily spending limit', `The coach is paused until midnight UTC. Raise DAILY_SPEND_LIMIT_USD in Netlify if this is real traffic.`).catch((e) => console.error('alert', e.message));
+    if (!outOfCredit && !overBudget) {
+      await reportError(err, { where: 'chat', tags: { model: activeModel } });
+      await countError(db, auth, 'chat replies failing', err.message).catch((e) => console.error('count', e.message));
+    }
     if (outOfCredit) await alertAdmins(db, auth, 'HungerHush is out of API credit', 'The coach can\'t answer anyone. Top up at console.anthropic.com → Billing.').catch((e) => console.error('alert', e.message));
   }
 
@@ -495,3 +483,5 @@ function splitSystem(s) {
   const i = s.indexOf('--- CONTEXT ---');
   return i === -1 ? [s, ' '] : [s.slice(0, i).trim(), s.slice(i)];
 }
+
+export default monitored('chat', handler);

@@ -6,6 +6,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin } from './lib/admin.mjs';
 import { stripe, verifyWebhook } from './lib/stripe.mjs';
+import { monitored, reportError, alertAdmins } from './lib/monitor.mjs';
 
 const text = (status, body) => new Response(body, { status });
 
@@ -37,7 +38,7 @@ export async function applySubscription(db, sub, eventTime, uidHint = null) {
   return true;
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return text(405, 'POST only');
   const raw = await req.text();
   const event = verifyWebhook(raw, req.headers.get('stripe-signature'));
@@ -57,8 +58,11 @@ export default async (req) => {
       await applySubscription(db, { ...obj, deleted: event.type === 'customer.subscription.deleted' }, event.created);
     }
   } catch (err) {
-    console.error('stripe webhook', event.type, err.message);
+    await reportError(err, { where: 'stripe-webhook', tags: { event: event.type } });
+    await alertAdmins(db, admin().auth, 'HungerHush: a Stripe payment update failed', `${event.type}: ${err.message}`.slice(0, 160)).catch(() => {});
     return text(500, 'Error'); // Stripe retries
   }
   return text(200, 'ok');
 };
+
+export default monitored('stripe-webhook', handler);

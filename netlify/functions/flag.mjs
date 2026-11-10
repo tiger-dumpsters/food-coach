@@ -6,6 +6,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
+import { monitored } from './lib/monitor.mjs';
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -13,7 +14,7 @@ function json(status, body) {
 
 const toIso = (v) => (v?.toDate ? v.toDate().toISOString() : v instanceof Date ? v.toISOString() : v || null);
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req);
   if (who.error) return json(who.status, { error: who.error });
@@ -48,3 +49,5 @@ export default async (req) => {
   await msgs.doc(id).set({ flagged: true, flagNote: note }, { merge: true });
   return json(200, { ok: true, flagId: ref.id });
 };
+
+export default monitored('flag', handler);

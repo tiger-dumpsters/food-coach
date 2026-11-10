@@ -3,6 +3,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { spendAllowed, addSpend } from './lib/spend.mjs';
+import { reportError, alertAdmins } from './lib/monitor.mjs';
 import { admin } from './lib/admin.mjs';
 import { occasionFor } from './lib/occasions.mjs';
 import { makeClock, dayMinus } from './chat.mjs';
@@ -105,8 +106,14 @@ export async function runMorning(now = new Date()) {
 }
 
 export default async () => {
-  const sent = await runMorning();
-  console.log(`morning notes sent: ${sent.length}`);
+  try {
+    const sent = await runMorning();
+    console.log(`morning notes sent: ${sent.length}`);
+  } catch (err) {
+    await reportError(err, { where: 'morning' });
+    const { db, auth } = admin();
+    await alertAdmins(db, auth, 'HungerHush: morning notes failed', err.message).catch(() => {});
+  }
   return new Response(null, { status: 204 });
 };
 

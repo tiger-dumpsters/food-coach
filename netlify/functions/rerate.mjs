@@ -6,6 +6,7 @@ import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
 import { spendAllowed, addSpend } from './lib/spend.mjs';
 import { processingMix, dominant, LEVELS } from './lib/tools.mjs';
+import { monitored } from './lib/monitor.mjs';
 
 const MODEL = process.env.MODEL_FAST || 'claude-haiku-5-5';
 const VERSION = 'v1';
@@ -104,7 +105,7 @@ export function applyRating(meal, rated) {
   return mix ? { items, processing_mix: mix, processing: dominant(mix) } : null;
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req);
   if (who.error) return json(who.status, { error: who.error });
@@ -151,3 +152,5 @@ export default async (req) => {
   await userRef.set({ rerated: VERSION }, { merge: true });
   return json(200, { updated, of: todo.length });
 };
+
+export default monitored('rerate', handler);

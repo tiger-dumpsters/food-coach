@@ -6,6 +6,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
 import { limitsFor, UPGRADE } from './lib/plans.mjs';
+import { monitored } from './lib/monitor.mjs';
 
 const MAX_MEMBERS = 6;
 const INVITE_HOURS = 72;
@@ -28,7 +29,7 @@ function firstName(profile, who) {
   return local ? local[0].toUpperCase() + local.slice(1) : 'Member';
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req, { allowNoAccess: true });
   if (who.error) return json(who.status, { error: who.error });
@@ -117,3 +118,5 @@ export default async (req) => {
 
   return json(400, { error: 'Unknown action' });
 };
+
+export default monitored('household', handler);

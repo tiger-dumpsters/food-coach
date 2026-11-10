@@ -52,6 +52,11 @@
   status = 200
 
 [[redirects]]
+  from = "/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
   from = "/help"
   to = "/support"
   status = 301

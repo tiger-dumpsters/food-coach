@@ -85,7 +85,9 @@ mock.module('web-push', { defaultExport: {
 const calls = [];
 const queue = []; // scripted responses; when empty, fall back to the default pair
 const stripeCalls = [];
+const sentryCalls = [];
 globalThis.fetch = async (url, init) => {
+  if (String(url).includes('/envelope/')) { sentryCalls.push({ url: String(url), headers: init.headers, body: init.body }); return { ok: true }; }
   if (String(url).startsWith('https://api.stripe.com/')) {
     stripeCalls.push({ url: String(url), body: init.body ? new URLSearchParams(init.body) : null });
     const path = String(url).slice('https://api.stripe.com/v1/'.length);
@@ -773,4 +775,41 @@ test('the coach only sees the profile fields it needs, trimmed', async () => {
   assert.deepEqual(Object.keys(p).sort(), ['allergies', 'name', 'onboarded', 'targets']);
   assert.equal(p.allergies.length, 40);
   assert.equal(p.allergies[0].length, 80);
+});
+
+test('monitoring: errors reach Sentry without anyone\'s chat text; repeated failures alert; health check works', async () => {
+  const { reportError, countError, monitored } = await import('../netlify/functions/lib/monitor.mjs');
+  // no DSN: nothing sent
+  assert.equal(await reportError(new Error('x')), false);
+  process.env.SENTRY_DSN = 'https://abc123@o1.ingest.us.sentry.io/4507';
+  assert.equal(await reportError(new Error('Claude API 529: overloaded'), { where: 'chat' }), true);
+  const sc = sentryCalls.at(-1);
+  assert.equal(sc.url, 'https://o1.ingest.us.sentry.io/api/4507/envelope/');
+  assert.match(sc.headers['x-sentry-auth'], /sentry_key=abc123/);
+  const event = JSON.parse(sc.body.trim().split('\n')[2]);
+  assert.equal(event.exception.values[0].value, 'Claude API 529: overloaded');
+  assert.equal(event.tags.function, 'chat');
+  // a crash inside a function becomes a clean 500 and a report
+  const n = sentryCalls.length;
+  const r = await monitored('billing', async () => { throw new Error('boom'); })(new Request('http://x'));
+  assert.equal(r.status, 500);
+  assert.equal(sentryCalls.length, n + 1);
+  // one hiccup doesn't alert; three in an hour do
+  store.delete('config/alerts');
+  const before = lookedUp.length;
+  const { getFirestore } = await import('firebase-admin/firestore');
+  const { getAuth } = await import('firebase-admin/auth');
+  const db = getFirestore(), auth = getAuth();
+  await countError(db, auth, 'chat replies failing', 'e1');
+  await countError(db, auth, 'chat replies failing', 'e2');
+  assert.equal(lookedUp.length, before);
+  await countError(db, auth, 'chat replies failing', 'e3');
+  assert.ok(lookedUp.length > before);
+  delete process.env.SENTRY_DSN;
+  // health
+  const { default: health } = await import('../netlify/functions/health.mjs');
+  process.env.ANTHROPIC_API_KEY ||= 'k'; process.env.FIREBASE_SERVICE_ACCOUNT ||= '{}';
+  const h = await health();
+  assert.equal(h.status, 200);
+  assert.deepEqual((await h.json()).checks, { keys: true, database: true });
 });

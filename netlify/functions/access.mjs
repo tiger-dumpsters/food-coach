@@ -5,6 +5,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
+import { monitored } from './lib/monitor.mjs';
 
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const USES_PER_LINK = Number(process.env.INVITES_PER_USER || 25);
@@ -23,7 +24,7 @@ export async function grantAccess(db, uid, invitedBy) {
   await db.collection('users').doc(uid).set({ access: true, ...(invitedBy ? { invitedBy } : {}), accessAt: FieldValue.serverTimestamp() }, { merge: true });
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req, { allowNoAccess: true });
   if (who.error) return json(who.status, { error: who.error });
@@ -85,3 +86,5 @@ export default async (req) => {
 
   return json(400, { error: 'Unknown action' });
 };
+
+export default monitored('access', handler);

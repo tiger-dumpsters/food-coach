@@ -8,6 +8,7 @@ import {
   setDoc, updateDoc,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { identify } from './monitoring.js';
 import { hungerHeatmap, weakSpots, keepsYouFull, BUCKETS, WEEKDAYS, bucketRange } from './insights.js';
 
 const fb = initializeApp(firebaseConfig);
@@ -177,6 +178,7 @@ onAuthStateChanged(auth, async (user) => {
   state.unsub = [];
   watchHousehold(null);
   state.user = user;
+  identify(user?.uid);
   $('#signin').hidden = !!user;
   $('#gate').hidden = true;
   $('#app').hidden = true;

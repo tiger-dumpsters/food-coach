@@ -7,6 +7,7 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
 import { stripe } from './lib/stripe.mjs';
+import { monitored, reportError } from './lib/monitor.mjs';
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -64,7 +65,7 @@ export async function deleteAccount(db, auth, uid) {
   try { await auth.deleteUser(uid); } catch (err) { if (err.code !== 'auth/user-not-found') throw err; }
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req, { allowNoAccess: true });
   if (who.error) return json(who.status, { error: who.error });
@@ -76,8 +77,10 @@ export default async (req) => {
   try {
     await deleteAccount(db, auth, who.uid);
   } catch (err) {
-    console.error('account delete', who.uid, err.message);
+    await reportError(err, { where: 'account-delete' });
     return json(500, { error: "Something went wrong deleting your account. Nothing was charged. Please try again, or email hello@gethungerhush.com." });
   }
   return json(200, { deleted: true });
 };
+
+export default monitored('account', handler);

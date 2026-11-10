@@ -4,12 +4,13 @@
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
 import { getVapid, subId, sendToUser } from './lib/push.mjs';
+import { monitored } from './lib/monitor.mjs';
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-export default async (req) => {
+const handler = async (req) => {
   if (req.method !== 'POST') return json(405, { error: 'POST only' });
   const who = await verify(req);
   if (who.error) return json(who.status, { error: who.error });
@@ -64,3 +65,5 @@ export default async (req) => {
 
   return json(400, { error: 'Unknown action' });
 };
+
+export default monitored('push', handler);
