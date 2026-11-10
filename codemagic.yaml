@@ -20,6 +20,20 @@ workflows:
       vars:
         BUNDLE_ID: com.gethungerhush.app
     scripts:
+      - name: Check settings
+        script: |
+          # Catch the common mix-ups (an empty value, or the copy command pasted
+          # instead of the file's contents) with a plain-English message.
+          fail=0
+          check() { printf '%s' "$2" | grep -q -- "$3" || { echo "X  $1 doesn't look right: it should contain \"$3\". Re-copy it (run the pbcopy command, then press Cmd+V into Codemagic)."; fail=1; }; }
+          check GOOGLE_SERVICE_INFO_PLIST "$GOOGLE_SERVICE_INFO_PLIST" "<plist"
+          check GOOGLE_SERVICE_INFO_PLIST "$GOOGLE_SERVICE_INFO_PLIST" "REVERSED_CLIENT_ID"
+          check APP_STORE_CONNECT_PRIVATE_KEY "$APP_STORE_CONNECT_PRIVATE_KEY" "BEGIN PRIVATE KEY"
+          check CERTIFICATE_PRIVATE_KEY "$CERTIFICATE_PRIVATE_KEY" "PRIVATE KEY"
+          [ ${#APP_STORE_CONNECT_KEY_IDENTIFIER} -eq 10 ] || { echo "X  APP_STORE_CONNECT_KEY_IDENTIFIER should be the 10-character Key ID of the Codemagic API key."; fail=1; }
+          printf '%s' "$APP_STORE_CONNECT_ISSUER_ID" | grep -Eq '^[0-9a-f-]{36}$' || { echo "X  APP_STORE_CONNECT_ISSUER_ID should look like 58d839e2-086a-4da6-858a-0ed8795b8e14."; fail=1; }
+          [ $fail -eq 0 ] && echo "All five settings look right."
+          exit $fail
       - name: Install packages
         script: npm ci
       - name: Firebase config for iOS
