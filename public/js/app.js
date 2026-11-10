@@ -1,7 +1,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, GoogleAuthProvider, OAuthProvider, signInWithPopup, signInWithRedirect,
-  getRedirectResult, signInWithCredential, signOut as webSignOut,
+  getRedirectResult, signInWithCredential, revokeAccessToken, signOut as webSignOut,
 } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -232,6 +232,7 @@ function enterApp(user) {
   $('#app').hidden = false;
   startSession(user);
   refreshPlan();
+  syncHealth();
   // Back from Stripe Checkout.
   const params = new URLSearchParams(location.search);
   if (params.has('upgraded') || params.has('upgrade')) {
@@ -247,6 +248,7 @@ function enterApp(user) {
 async function refreshPlan() {
   try { state.plan = await api('billing', { action: 'status' }); } catch { state.plan = null; }
   applyPlan();
+  if (state.user) setupPurchases(state.user.uid);
 }
 function hasFeature(f) { return !state.plan || !!state.plan.limits?.[f]; }
 function applyPlan() {
@@ -276,13 +278,127 @@ function planHtml() {
       : pl.cancelAtPeriodEnd ? `Plus ends ${date}. You'll keep your log on the free plan.`
       : `Plus${date ? ` · renews ${date}` : ''}`;
     return `<section class="panel"><h2>Your plan</h2><p class="sub">${esc(line)}</p>
-      ${pl.paid && !NATIVE ? '<div class="btn-row"><button class="btn small" id="plan-manage">Manage subscription</button></div>' : ''}</section>`;
+      ${pl.paid && pl.source === 'apple' ? (IOS_APP ? '<div class="btn-row"><button class="btn small" id="plan-manage-apple">Manage subscription</button></div>' : '<p class="sub">Billed through the App Store. Manage it in your iPhone\'s Settings → your name → Subscriptions.</p>')
+        : pl.paid && !NATIVE ? '<div class="btn-row"><button class="btn small" id="plan-manage">Manage subscription</button></div>' : ''}</section>`;
   }
   return `<section class="panel plan-upsell"><h2>Your plan: Free</h2>
     <p class="disclaimer">Free covers chat logging, hunger patterns and trends, up to ${pl.limits.messagesPerDay} messages a day.</p>
     <ul class="plan-perks"><li>Snap a photo of a meal and it's logged</li><li>Household: shared pantry and shared meals with your partner (they join free)</li><li>Deeper answers when you ask why or what to eat</li><li>Up to 150 messages a day</li></ul>
-    ${NATIVE ? '<p class="sub">Upgrading inside the app is coming soon.</p>' : pl.billingReady ? `<button class="btn primary" id="plan-upgrade">Upgrade to Plus${pl.priceLabel ? ` · ${esc(pl.priceLabel)}` : ''}</button>` : '<p class="sub">Plus is coming soon.</p>'}
+    ${IOS_APP ? iapHtml() : NATIVE ? '' : pl.billingReady ? `<button class="btn primary" id="plan-upgrade">Upgrade to Plus${pl.priceLabel ? ` · ${esc(pl.priceLabel)}` : ''}</button>` : '<p class="sub">Plus is coming soon.</p>'}
   </section>`;
+}
+
+// ---------- in-app purchase (iPhone app, via RevenueCat) ----------
+// Apple requires: price and length shown before buying, auto-renew explained, links to
+// the terms and privacy policy, and a "Restore purchases" button.
+const APPLE_EULA = 'https://www.apple.com/legal/internet-services/itunes/dev/stdeula/';
+let iap = { ready: false, pkg: null, configuredFor: null };
+async function setupPurchases(uid) {
+  const key = state.plan?.revenuecatKey;
+  const P = plugin('Purchases');
+  if (!IOS_APP || !key || !P || iap.configuredFor === uid) return;
+  try {
+    if (!iap.configuredFor) await P.configure({ apiKey: key, appUserID: uid });
+    else await P.logIn({ appUserID: uid });
+    iap.configuredFor = uid;
+    const { current } = await P.getOfferings();
+    iap.pkg = current?.monthly || current?.availablePackages?.[0] || null;
+    iap.ready = !!iap.pkg;
+  } catch (e) { console.warn('purchases', e); }
+  if (state.view === 'settings') renderSettings();
+}
+function iapHtml() {
+  if (!iap.ready) return '<p class="sub">Loading Plus…</p>';
+  const p = iap.pkg.product;
+  const intro = p.introPrice && Number(p.introPrice.price) === 0
+    ? `${p.introPrice.periodNumberOfUnits} ${String(p.introPrice.periodUnit || 'DAY').toLowerCase()}${p.introPrice.periodNumberOfUnits > 1 ? 's' : ''} free, then ` : '';
+  return `<button class="btn primary" id="iap-buy">${intro ? 'Start free trial' : 'Get Plus'} · ${esc(intro)}${esc(p.priceString)}/month</button>
+    <p class="fine iap-terms">HungerHush Plus is a monthly subscription. ${intro ? 'After the free trial, ' : ''}${esc(p.priceString)} is charged to your Apple ID each month and renews automatically unless you cancel at least 24 hours before the period ends. Cancel any time in Settings → your name → Subscriptions.
+      <a href="/terms" target="_blank" rel="noopener">Terms</a> · <a href="${APPLE_EULA}" target="_blank" rel="noopener">Apple EULA</a> · <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+    <button class="linkbtn" id="iap-restore" type="button">Restore purchases</button>
+    <p id="iap-msg" class="sub" hidden></p>`;
+}
+async function afterApplePurchase(note) {
+  try { state.plan = await api('billing', { action: 'sync-apple' }); } catch {}
+  applyPlan();
+  const m = $('#iap-msg'); if (m && note) { m.textContent = note; m.hidden = false; }
+}
+function bindIap() {
+  const P = plugin('Purchases');
+  $('#iap-buy')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      await P.purchasePackage({ aPackage: iap.pkg });
+      await afterApplePurchase();
+      upgradeNote('Welcome to Plus! Photos and households are unlocked.');
+    } catch (err) {
+      e.target.disabled = false;
+      if (!err?.userCancelled && !/cancel/i.test(String(err?.message || err?.code))) { const m = $('#iap-msg'); if (m) { m.textContent = `Purchase didn't go through: ${err.message || err.code}`; m.hidden = false; } }
+    }
+  });
+  $('#iap-restore')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const { customerInfo } = await P.restorePurchases();
+      const active = !!customerInfo?.entitlements?.active?.plus;
+      await afterApplePurchase(active ? 'Restored. You\'re on Plus.' : 'No active Plus subscription found for this Apple ID.');
+    } catch (err) { const m = $('#iap-msg'); if (m) { m.textContent = `Couldn't restore: ${err.message || err.code}`; m.hidden = false; } }
+    e.target.disabled = false;
+  });
+  $('#plan-manage-apple')?.addEventListener('click', () => P?.showManageSubscriptions?.().catch(() => {}));
+}
+
+// ---------- Apple Health (iPhone app) ----------
+function healthOn() { try { return localStorage.getItem('hh-health') === '1'; } catch { return false; } }
+function healthHtml() {
+  if (!IOS_APP) return '';
+  return `<section class="panel" id="health-panel"><h2>Apple Health</h2>
+    <p class="disclaimer">Bring in workouts from your iPhone and Apple Watch automatically, so you don't have to log them. HungerHush only reads workouts.</p>
+    ${healthOn()
+      ? '<p class="saved-note" style="margin-top:8px">Connected. Workouts sync when you open the app.</p><div class="btn-row" style="margin-top:8px"><button class="btn small" id="health-sync">Sync now</button></div>'
+      : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="health-connect" style="width:auto">Connect Apple Health</button></div>'}
+    <p id="health-msg" class="sub" hidden></p></section>`;
+}
+async function syncHealth({ quiet = true } = {}) {
+  const H = plugin('Health');
+  if (!IOS_APP || !H || !healthOn() || !state.user) return 0;
+  let since = null;
+  try { since = localStorage.getItem('hh-health-last'); } catch {}
+  const startDate = since || new Date(Date.now() - 30 * 864e5).toISOString();
+  const endDate = new Date().toISOString();
+  try {
+    const { workouts = [] } = await H.queryWorkouts({ startDate, endDate, limit: 200, ascending: true });
+    const list = workouts.filter((w) => w.platformId).map((w) => ({
+      id: w.platformId, type: w.workoutType, start: w.startDate, end: w.endDate,
+      durationSec: w.duration, kcal: w.totalEnergyBurned, meters: w.totalDistance, source: w.sourceName,
+    }));
+    const r = list.length ? await api('health-sync', { workouts: list, tz: TZ }) : { added: 0 };
+    try { localStorage.setItem('hh-health-last', endDate); } catch {}
+    if (!quiet) { const m = $('#health-msg'); if (m) { m.textContent = r.added ? `Added ${r.added} workout${r.added === 1 ? '' : 's'}.` : 'Up to date.'; m.hidden = false; } }
+    return r.added;
+  } catch (err) {
+    if (!quiet) { const m = $('#health-msg'); if (m) { m.textContent = `Couldn't sync: ${err.message}`; m.hidden = false; } }
+    return 0;
+  }
+}
+function bindHealth() {
+  $('#health-connect')?.addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    const H = plugin('Health');
+    try {
+      const { available } = await H.isAvailable();
+      if (!available) throw new Error('Apple Health isn\'t available on this device.');
+      await H.requestAuthorization({ read: ['workouts'] });
+      try { localStorage.setItem('hh-health', '1'); } catch {}
+      renderSettings();
+      await syncHealth({ quiet: false });
+    } catch (err) { e.target.disabled = false; const m = $('#health-msg'); if (m) { m.textContent = err.message; m.hidden = false; } }
+  });
+  $('#health-sync')?.addEventListener('click', async (e) => { e.target.disabled = true; await syncHealth({ quiet: false }); e.target.disabled = false; });
+}
+if (IOS_APP) {
+  // Catch up on new workouts whenever the app comes back to the front.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') syncHealth(); });
 }
 
 function showGate(user) {
@@ -319,12 +435,26 @@ $('#gate-form').addEventListener('submit', async (e) => {
 });
 $('#gate-signout').addEventListener('click', () => signOut(auth));
 
+// First-run consent: both boxes, then the server records it.
+const consentReady = () => { $('#consent-go').disabled = !($('#consent-ai').checked && $('#consent-adult').checked); };
+$('#consent-ai').addEventListener('change', consentReady);
+$('#consent-adult').addEventListener('change', consentReady);
+$('#consent-go').addEventListener('click', async (e) => {
+  e.target.disabled = true;
+  try {
+    await api('access', { action: 'consent', ai: true, adult: true });
+    $('#consent').hidden = true;
+  } catch (err) { const m = $('#consent-error'); m.textContent = err.message; m.hidden = false; e.target.disabled = false; }
+});
+$('#consent-no').addEventListener('click', () => signOut(auth));
+
 function startSession(user) {
   const uref = doc(db, 'users', user.uid);
 
   state.unsub.push(onSnapshot(uref, (snap) => {
     const prevPlan = state.profile && [state.profile.plan, state.profile.planStatus, state.profile.comp, state.profile.planCancelAtPeriodEnd].join('|');
     state.profile = snap.exists() ? snap.data() : null;
+    $('#consent').hidden = !!state.profile?.aiConsentAt;
     const nextPlan = state.profile && [state.profile.plan, state.profile.planStatus, state.profile.comp, state.profile.planCancelAtPeriodEnd].join('|');
     if (prevPlan && prevPlan !== nextPlan) refreshPlan();
     document.querySelectorAll('.weight-only').forEach((el) => { el.hidden = !state.profile?.track_weight; });
@@ -502,7 +632,8 @@ async function send(text, photo = null) {
       await api('chat', payload);
     }
   } catch (err) {
-    const msg = err.status === 429 || err.status === 402 ? err.message
+    if (err.status === 428) $('#consent').hidden = false;
+    const msg = err.status === 429 || err.status === 402 || err.status === 428 ? err.message
       : !err.status ? "Lost the connection before that went through. Your message is still in the box. Tap send to try again."
       : `Couldn't send that (${err.message}). Try again?`;
     state.messages.push({ id: 'err' + Date.now(), role: 'assistant', text: msg, local: true });
@@ -1063,6 +1194,7 @@ function renderSettings() {
     </section>
 
     ${householdHtml()}
+    ${healthHtml()}
 
     <section class="panel" id="friends-panel">
       <h2>Invite friends</h2>
@@ -1121,6 +1253,8 @@ function renderSettings() {
 
   bindHousehold();
   bindFriends();
+  bindIap();
+  bindHealth();
   $('#plan-upgrade')?.addEventListener('click', (e) => startCheckout(e.target));
   $('#plan-manage')?.addEventListener('click', (e) => openPortal(e.target));
   refreshPushPanel();
@@ -1239,6 +1373,13 @@ function bindDelete() {
   go.addEventListener('click', async () => {
     go.disabled = true; go.textContent = 'Deleting…';
     try {
+      // Apple requires apps to revoke Sign in with Apple when an account is deleted.
+      if (state.user.providerData.some((p) => p.providerId === 'apple.com') && IOS_APP) {
+        try {
+          const r = await plugin('FirebaseAuthentication').signInWithApple();
+          if (r?.credential?.authorizationCode) await revokeAccessToken(auth, r.credential.authorizationCode);
+        } catch (e) { console.warn('apple revoke', e); }
+      }
       await api('account', { action: 'delete', confirm: 'DELETE' });
       state.deleted = true;
       state.unsub.forEach((u) => u()); state.unsub = [];
@@ -1399,10 +1540,17 @@ async function exportCsv() {
     const vals = [m.day, hhmm(toDate(m.at)), m.meal, m.description, m.calories, m.protein_g, m.fiber_g, m.fat_g, m.carbs_g, m.processing];
     lines.push(vals.map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
   });
+  const name = `food-log-${localDay()}.csv`;
+  if (NATIVE) {
+    // Web downloads don't work inside the app: save the file, then open the share sheet.
+    const { uri } = await plugin('Filesystem').writeFile({ path: name, data: lines.join('\n'), directory: 'CACHE', encoding: 'utf8' });
+    await plugin('Share').share({ title: 'HungerHush log', url: uri }).catch(() => {});
+    return;
+  }
   const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `food-log-${localDay()}.csv`;
+  a.download = name;
   a.click();
 }
 

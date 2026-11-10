@@ -78,6 +78,7 @@ export async function runMorning(now = new Date()) {
     const hour = Math.floor(clock.localMinutes / 60);
     if (hour < 7 || hour >= 14) return;
     if (p.lastMorningNote === clock.day) return;
+    if (process.env.REQUIRE_AI_CONSENT !== 'false' && !p.aiConsentAt) return; // hasn't agreed to the AI yet
     const occasion = occasionFor(clock.day);
     if (!occasion) return;
     const ref = db.collection('users').doc(u.id);

@@ -52,6 +52,9 @@ export function planSummary(profile) {
     cancelAtPeriodEnd: p.planCancelAtPeriodEnd === true,
     limits: { ...PLANS[id], messagesPerDay: PLANS[id].messagesPerDay },
     priceLabel: process.env.PLUS_PRICE_LABEL || '',
+    source: p.planSource || (p.stripeCustomerId ? 'stripe' : null),
+    // Public key for in-app purchase in the iPhone app (RevenueCat "appl_..." key; safe to share).
+    revenuecatKey: process.env.REVENUECAT_IOS_PUBLIC_KEY || '',
     billingReady: !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_PRICE_ID),
   };
 }

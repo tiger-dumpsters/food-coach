@@ -6,6 +6,7 @@
 import { admin, verify } from './lib/admin.mjs';
 import { planSummary } from './lib/plans.mjs';
 import { stripe } from './lib/stripe.mjs';
+import { syncFromRevenueCat } from './lib/apple-plan.mjs';
 import { monitored } from './lib/monitor.mjs';
 
 function json(status, body) {
@@ -24,6 +25,13 @@ const handler = async (req) => {
   const origin = process.env.URL || new URL(req.url).origin;
 
   if (body.action === 'status') return json(200, planSummary(profile));
+
+  // iPhone app, right after a purchase or "Restore purchases": pull the latest from RevenueCat.
+  if (body.action === 'sync-apple') {
+    const r = await syncFromRevenueCat(db, who.uid);
+    const fresh = (await userRef.get()).data() || {};
+    return json(200, { ...r, ...planSummary(fresh) });
+  }
 
   if (!process.env.STRIPE_SECRET_KEY || !process.env.STRIPE_PRICE_ID) {
     return json(503, { error: "Upgrades aren't open yet." });

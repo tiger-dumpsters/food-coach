@@ -42,6 +42,14 @@ const handler = async (req) => {
     return json(200, { access: who.hasAccess });
   }
 
+  // First run: agree to the coach sending messages to Anthropic, and confirm 18+.
+  // (Apple guideline 5.1.2(i) asks for clear consent before sharing data with a third-party AI.)
+  if (body.action === 'consent') {
+    if (body.ai !== true || body.adult !== true) return json(400, { error: 'Please confirm both to continue.' });
+    await userRef.set({ aiConsentAt: FieldValue.serverTimestamp(), ageConfirmedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return json(200, { ok: true });
+  }
+
   if (body.action === 'redeem') {
     if (who.hasAccess) return json(200, { access: true });
     const code = String(body.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');

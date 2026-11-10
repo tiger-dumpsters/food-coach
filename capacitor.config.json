@@ -5,13 +5,15 @@
   "server": {
     "url": "https://gethungerhush.com/app",
     "allowNavigation": [
-      "gethungerhush.com",
       "*.gethungerhush.com",
-      "food-app-55f7d.firebaseapp.com",
       "accounts.google.com",
+      "api.revenuecat.com",
+      "billing.stripe.com",
       "checkout.stripe.com",
-      "billing.stripe.com"
-    ]
+      "food-app-55f7d.firebaseapp.com",
+      "gethungerhush.com"
+    ],
+    "errorPath": "offline.html"
   },
   "ios": {
     "contentInset": "never",

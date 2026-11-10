@@ -27,6 +27,7 @@ export async function applySubscription(db, sub, eventTime, uidHint = null) {
   await ref.set({
     plan: 'plus',
     planStatus: sub.status === 'canceled' || sub.deleted ? 'canceled' : sub.status,
+    planSource: 'stripe',
     planRenewsAt: periodEnd ? new Date(periodEnd * 1000).toISOString() : null,
     planCancelAtPeriodEnd: !!sub.cancel_at_period_end,
     stripeCustomerId: sub.customer,

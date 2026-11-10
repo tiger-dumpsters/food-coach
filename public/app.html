@@ -37,12 +37,12 @@
       <p class="lede">We'll help quiet the noise and find real foods that keep you satisfied. Food noise isn't permanent. HungerHush can help.</p>
       <button id="signin-apple" class="btn apple" hidden><svg width="16" height="19" viewBox="0 0 814 1000" aria-hidden="true"><path fill="currentColor" d="M788 341c-6 4-108 62-108 190 0 149 131 202 135 203-1 3-21 72-69 142-43 62-88 124-156 124s-86-40-164-40c-77 0-104 41-167 41s-106-58-156-129C46 790 0 662 0 541c0-194 126-297 250-297 66 0 121 43 162 43 39 0 101-46 176-46 29 0 131 3 200 100zM555 159c31-37 53-88 53-139 0-7-1-14-2-20-50 2-110 34-146 76-28 32-55 83-55 135 0 8 1 16 2 18 3 1 9 2 14 2 45 0 102-30 134-72z"/></svg>Continue with Apple</button>
       <button id="signin-btn" class="btn primary">Continue with Google</button>
-      <p class="fine">Private beta. Your log is private and never sold.<br>By continuing, you agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
+      <p class="fine">Your log is private and never sold.<br>By continuing, you agree to the <a href="/terms" target="_blank" rel="noopener">Terms</a> and <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</p>
       <p id="signin-error" class="error" hidden></p>
     </div>
   </section>
 
-  <!-- Signed in, but not in the beta yet -->
+  <!-- Signed in, but no access yet -->
   <section id="gate" class="signin" hidden>
     <div class="signin-inner">
       <svg class="brand-icon" width="64" height="64" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="23" fill="#1E1830"/><rect x="0.75" y="0.75" width="98.5" height="98.5" rx="22.5" fill="none" stroke="#3A3058" stroke-width="1.5"/><path d="M22 24 H78 A8 8 0 0 1 86 32 V60 A8 8 0 0 1 78 68 H46 L34 78 V68 H22 A8 8 0 0 1 14 60 V32 A8 8 0 0 1 22 24 Z" fill="none" stroke="#C7B3FF" stroke-width="5" stroke-linejoin="round"/><text x="48" y="54" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-style="italic" font-weight="600" font-size="22" fill="#F3EEFF">hush</text><circle cx="75.5" cy="52" r="2.4" fill="#F6B89A"/></svg>
@@ -54,6 +54,21 @@
       </form>
       <p id="gate-error" class="error" hidden></p>
       <p class="fine">Signed in as <span id="gate-email"></span> · <button id="gate-signout" class="linkbtn" type="button">Use a different account</button></p>
+    </div>
+  </section>
+
+  <!-- First run: how the coach works (AI disclosure + consent, 18+) -->
+  <section id="consent" class="consent" hidden role="dialog" aria-modal="true" aria-labelledby="consent-title">
+    <div class="consent-card">
+      <h2 id="consent-title">Before we start</h2>
+      <p>HungerHush's coach is powered by <strong>Claude</strong>, an AI model made by <strong>Anthropic</strong>.</p>
+      <p>To log your meals and reply, what you send the coach (your messages, meal photos, and the parts of your log it needs) is sent to Anthropic. Anthropic doesn't use it to train its models, and we never sell your data or use it for ads.</p>
+      <p class="sub">The coach gives general guidance, not medical advice. <a href="/privacy" target="_blank" rel="noopener">How we handle your data</a></p>
+      <label class="check"><input type="checkbox" id="consent-ai"> I agree to my messages and photos being sent to Anthropic to power the coach.</label>
+      <label class="check"><input type="checkbox" id="consent-adult"> I'm 18 or older.</label>
+      <button class="btn primary" id="consent-go" disabled>Continue</button>
+      <button class="linkbtn consent-no" id="consent-no" type="button">Not now (sign out)</button>
+      <p id="consent-error" class="error" hidden></p>
     </div>
   </section>
 

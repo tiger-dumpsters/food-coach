@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>HungerHush</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #1E1830; color: #F3EEFF; font: 17px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  main { min-height: 100%; display: grid; place-items: center; text-align: center; padding: 24px; box-sizing: border-box; }
+  .wordmark { font-family: Georgia, serif; font-size: 30px; letter-spacing: -0.02em; }
+  .wordmark em { color: #C7B3FF; font-weight: 600; }
+  h1 { font-family: Georgia, serif; font-weight: 600; font-size: 26px; margin: 28px 0 8px; }
+  p { color: #D6CCEE; margin: 0 auto 24px; max-width: 22em; }
+  button { background: #C7B3FF; color: #1E1830; border: 0; border-radius: 999px; font: inherit; font-weight: 700; padding: 14px 28px; min-width: 180px; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <div class="wordmark">hunger<em>hush</em></div>
+    <h1>You're offline</h1>
+    <p>HungerHush needs a connection to reach your coach. Check your Wi-Fi or cellular signal, then try again.</p>
+    <button onclick="location.replace('https://gethungerhush.com/app')">Try again</button>
+  </div>
+</main>
+<script>
+  // Come back on our own as soon as the connection returns.
+  window.addEventListener('online', () => location.replace('https://gethungerhush.com/app'));
+</script>
+</body>
+</html>

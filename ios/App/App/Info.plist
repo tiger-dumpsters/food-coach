@@ -37,6 +37,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>HungerHush uses the camera so you can snap a photo of a meal or a nutrition label to log it.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>HungerHush reads your workouts from Apple Health so they appear in your log without typing them in.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>HungerHush does not write to Apple Health.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>HungerHush opens your photos so you can log a meal from a picture you already took.</string>
 	<key>UIApplicationSceneManifest</key>

@@ -202,6 +202,10 @@ const handler = async (req) => {
   if (dupSnap?.docs.length) return json(200, { duplicate: true });
 
   const profile = profileSnap.exists ? profileSnap.data() : null;
+  // Nothing goes to the AI until the person has agreed to it (first-run screen in the app).
+  if (process.env.REQUIRE_AI_CONSENT !== 'false' && !profile?.aiConsentAt) {
+    return json(428, { error: 'Please review and accept how the coach works first.', code: 'consent' });
+  }
   const limits = limitsFor(profile);
   if (image && !limits.photos) return json(402, { error: UPGRADE.photos, code: 'upgrade', feature: 'photos' });
   const [msgCount, household] = await Promise.all([

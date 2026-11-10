@@ -6,7 +6,7 @@
   "description": "Chat-first food and fitness coach (beta)",
   "scripts": {
     "test": "node --experimental-test-module-mocks --test tests/chat.test.mjs tests/insights.test.mjs",
-    "check": "node --check public/js/monitoring.js && node --check netlify/functions/lib/monitor.mjs && node --check netlify/functions/health.mjs && node --check netlify/functions/lib/spend.mjs && node --check netlify/functions/account.mjs && node --check netlify/functions/billing.mjs && node --check netlify/functions/stripe-webhook.mjs && node --check netlify/functions/lib/stripe.mjs && node --check netlify/functions/lib/plans.mjs && node --check netlify/functions/access.mjs && node --check netlify/functions/push.mjs && node --check netlify/functions/lib/push.mjs && node --check public/sw.js && node --check netlify/functions/morning.mjs && node --check netlify/functions/lib/occasions.mjs && node --check netlify/functions/flag.mjs && node --check netlify/functions/rerate.mjs && node --check netlify/functions/household.mjs && node --check netlify/functions/lib/admin.mjs && node --check public/js/insights.js && node --check netlify/functions/chat.mjs &&node --check netlify/functions/lib/prompt.mjs && node --check netlify/functions/lib/tools.mjs && node --check public/js/app.js",
+    "check": "node --check netlify/functions/lib/apple-plan.mjs && node --check netlify/functions/revenuecat-webhook.mjs && node --check netlify/functions/health-sync.mjs && node --check public/js/monitoring.js && node --check netlify/functions/lib/monitor.mjs && node --check netlify/functions/health.mjs && node --check netlify/functions/lib/spend.mjs && node --check netlify/functions/account.mjs && node --check netlify/functions/billing.mjs && node --check netlify/functions/stripe-webhook.mjs && node --check netlify/functions/lib/stripe.mjs && node --check netlify/functions/lib/plans.mjs && node --check netlify/functions/access.mjs && node --check netlify/functions/push.mjs && node --check netlify/functions/lib/push.mjs && node --check public/sw.js && node --check netlify/functions/morning.mjs && node --check netlify/functions/lib/occasions.mjs && node --check netlify/functions/flag.mjs && node --check netlify/functions/rerate.mjs && node --check netlify/functions/household.mjs && node --check netlify/functions/lib/admin.mjs && node --check public/js/insights.js && node --check netlify/functions/chat.mjs &&node --check netlify/functions/lib/prompt.mjs && node --check netlify/functions/lib/tools.mjs && node --check public/js/app.js",
     "test:rules": "npx -y firebase-tools@14 emulators:exec --only firestore --project demo-hungerhush \"node --test tests/rules.test.mjs\""
   },
   "dependencies": {
@@ -21,10 +21,14 @@
     "@capacitor-firebase/messaging": "^8.6.0",
     "@capacitor/cli": "^8.6.0",
     "@capacitor/core": "^8.6.0",
+    "@capacitor/filesystem": "^8.1.5",
     "@capacitor/ios": "^8.6.0",
+    "@capacitor/share": "^8.0.3",
     "@capacitor/splash-screen": "^8.0.2",
     "@capacitor/status-bar": "^8.0.4",
+    "@capgo/capacitor-health": "^8.12.1",
     "@firebase/rules-unit-testing": "^5.0.2",
+    "@revenuecat/purchases-capacitor": "^14.1.0",
     "firebase": "^12.19.0"
   }
 }

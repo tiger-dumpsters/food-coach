@@ -1,3 +1,4 @@
+process.env.REQUIRE_AI_CONSENT = 'false'; // most tests skip the first-run consent screen; one test turns it on
 import { test, mock } from 'node:test';
 import assert from 'node:assert';
 
@@ -87,6 +88,14 @@ const queue = []; // scripted responses; when empty, fall back to the default pa
 const stripeCalls = [];
 const sentryCalls = [];
 globalThis.fetch = async (url, init) => {
+  if (String(url).startsWith('https://api.revenuecat.com/')) {
+    const uid = decodeURIComponent(String(url).split('/subscribers/')[1]);
+    const exp = new Date(Date.now() + 6 * 864e5).toISOString();
+    const subscriber = uid === 'u3'
+      ? { entitlements: { plus: { expires_date: exp, product_identifier: 'hungerhush_plus_monthly' } }, subscriptions: { hungerhush_plus_monthly: { period_type: 'trial', is_sandbox: true } } }
+      : { entitlements: {}, subscriptions: {} };
+    return { ok: true, json: async () => ({ subscriber }) };
+  }
   if (String(url).includes('/envelope/')) { sentryCalls.push({ url: String(url), headers: init.headers, body: init.body }); return { ok: true }; }
   if (String(url).startsWith('https://api.stripe.com/')) {
     stripeCalls.push({ url: String(url), body: init.body ? new URLSearchParams(init.body) : null });
@@ -861,4 +870,67 @@ test('reliability: Claude busy (529) gets one quick retry; a stuck call times ou
   await assert.rejects(callClaude({ model: 'claude-haiku-5-5', system: [], messages: [], timeoutMs: 5_000 }), /timeout/);
   clearTimeout(keepAlive);
   globalThis.fetch = realFetch;
+});
+
+test('App Store purchases: RevenueCat webhook sets Plus, cancel keeps it until expiry, expiry ends it, stale and forged events ignored', async () => {
+  process.env.TIERS_ENABLED = 'true'; process.env.REVENUECAT_WEBHOOK_AUTH = 'rc-secret';
+  const { default: hook } = await import('../netlify/functions/revenuecat-webhook.mjs');
+  const { planFor } = await import('../netlify/functions/lib/plans.mjs');
+  const send = (event, auth = 'rc-secret') => hook(new Request('http://x/rc', { method: 'POST', headers: { authorization: auth }, body: JSON.stringify({ event }) }));
+  store.set('users/u4', { ...store.get('users/u4'), comp: false, plan: null, planStatus: null, planEventAt: 0, planSource: null });
+  const base = { app_user_id: 'u4', product_id: 'hungerhush_plus_monthly', entitlement_ids: ['plus'], environment: 'SANDBOX' };
+  const future = Date.now() + 30 * 864e5;
+  assert.equal((await send({ ...base, type: 'INITIAL_PURCHASE' }, 'wrong')).status, 401);
+  assert.equal((await send({ ...base, type: 'INITIAL_PURCHASE', period_type: 'TRIAL', expiration_at_ms: future, event_timestamp_ms: 1000_000 })).status, 200);
+  let u = store.get('users/u4');
+  assert.equal(u.planStatus, 'trialing'); assert.equal(u.planSource, 'apple'); assert.equal(planFor(u), 'plus');
+  await send({ ...base, type: 'CANCELLATION', period_type: 'NORMAL', expiration_at_ms: future, event_timestamp_ms: 2000_000 });
+  u = store.get('users/u4');
+  assert.equal(planFor(u), 'plus'); assert.equal(u.planCancelAtPeriodEnd, true);
+  await send({ ...base, type: 'RENEWAL', expiration_at_ms: future, event_timestamp_ms: 1500_000 }); // late, older event
+  assert.equal(store.get('users/u4').planCancelAtPeriodEnd, true);
+  await send({ ...base, type: 'EXPIRATION', expiration_at_ms: Date.now() - 1000, event_timestamp_ms: 3000_000 });
+  assert.equal(planFor(store.get('users/u4')), 'free');
+  assert.equal((await (await send({ ...base, type: 'TEST' })).text()), 'ignored');
+  delete process.env.TIERS_ENABLED; delete process.env.REVENUECAT_WEBHOOK_AUTH;
+});
+
+test('App Store purchases: right after buying, the app syncs from RevenueCat and gets Plus', async () => {
+  process.env.TIERS_ENABLED = 'true'; process.env.REVENUECAT_SECRET_KEY = 'sk_test';
+  const { default: billing } = await import('../netlify/functions/billing.mjs');
+  store.set('users/u3', { ...store.get('users/u3'), comp: false, plan: null, planStatus: null, planEventAt: 0, planSource: null });
+  const r = await (await billing(new Request('http://x/billing', { method: 'POST', headers: { authorization: 'Bearer sam' }, body: JSON.stringify({ action: 'sync-apple' }) }))).json();
+  assert.equal(r.plan, 'plus'); assert.equal(r.source, 'apple');
+  assert.equal(store.get('users/u3').planStatus, 'trialing');
+  delete process.env.TIERS_ENABLED; delete process.env.REVENUECAT_SECRET_KEY;
+});
+
+test('Apple Health: workouts are mapped, saved once, and put on the right day', async () => {
+  const { default: hs, toEntry } = await import('../netlify/functions/health-sync.mjs');
+  const e = toEntry({ id: 'A1-B2', type: 'runningTreadmill', start: '2026-11-10T03:30:00Z', durationSec: 1830, kcal: 301.4, meters: 4828, source: 'Apple Watch' }, 'America/New_York');
+  assert.deepEqual([e.type, e.day, e.duration_min, e.calories, e.distance, e.source], ['Running', '2026-11-09', 31, 301, 3, 'apple_health']);
+  assert.equal(toEntry({ id: 'x', type: 'pilates', start: '2026-11-10T15:00:00Z', durationSec: 600 }, 'UTC').notes, 'pilates');
+  const hreq = (workouts) => new Request('http://x/hs', { method: 'POST', headers: { authorization: 'Bearer alexa' }, body: JSON.stringify({ workouts, tz: 'America/New_York' }) });
+  const w = [{ id: 'HK-1', type: 'walking', start: '2026-11-10T14:00:00Z', durationSec: 1800 }, { id: 'HK-2', type: 'yoga', start: '2026-11-10T22:00:00Z', durationSec: 2400 }];
+  assert.equal((await (await hs(hreq(w))).json()).added, 2);
+  assert.equal((await (await hs(hreq(w))).json()).added, 0, 'no duplicates on re-sync');
+  assert.equal(store.get('users/u2/workouts/hk_HK-1').type, 'Walking');
+  assert.equal(store.get('users/u2').health_connected, true);
+});
+
+test('AI consent: no coach call until the person agrees (and confirms 18+)', async () => {
+  process.env.REQUIRE_AI_CONSENT = 'true';
+  const { default: acc } = await import('../netlify/functions/access.mjs');
+  store.set('users/u2', { ...store.get('users/u2'), aiConsentAt: null });
+  const n = calls.length;
+  const r = await handler(req('alexa', { text: 'eggs', tz: 'America/New_York' }));
+  assert.equal(r.status, 428); assert.equal((await r.json()).code, 'consent');
+  assert.equal(calls.length, n);
+  const areq = (body) => new Request('http://x/access', { method: 'POST', headers: { authorization: 'Bearer alexa' }, body: JSON.stringify(body) });
+  assert.equal((await acc(areq({ action: 'consent', ai: true }))).status, 400);
+  assert.equal((await acc(areq({ action: 'consent', ai: true, adult: true }))).status, 200);
+  assert.ok(store.get('users/u2').aiConsentAt && store.get('users/u2').ageConfirmedAt);
+  store.delete('usage/u2');
+  assert.equal((await handler(req('alexa', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
+  process.env.REQUIRE_AI_CONSENT = 'false';
 });
