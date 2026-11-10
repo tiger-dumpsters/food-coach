@@ -6,21 +6,33 @@ service cloud.firestore {
     // (Meals shared with a household member are copied into their log by the server.)
     match /users/{uid} {
       function isOwner() { return request.auth != null && request.auth.uid == uid; }
-      // Access and plan fields are set only by the server (invite links, Stripe), never by the app.
-      function serverFields() {
-        return ['access', 'invitedBy', 'inviteCode', 'accessAt', 'comp', 'plan', 'planStatus', 'planRenewsAt',
-                'planCancelAtPeriodEnd', 'planEventAt', 'planUpdatedAt', 'stripeCustomerId', 'stripeSubscriptionId'];
-      }
-      function noAccessFields() { return !request.resource.data.keys().hasAny(serverFields()); }
-      function accessUnchanged() {
-        return !request.resource.data.diff(resource.data).affectedKeys().hasAny(serverFields());
-      }
-      allow read, delete: if isOwner();
-      allow create: if isOwner() && noAccessFields();
-      allow update: if isOwner() && accessUnchanged();
 
-      match /{document=**} {
-        allow read, write: if request.auth != null && request.auth.uid == uid;
+      // The only profile fields the app itself may write (the Settings screen and
+      // "redo setup"). Everything else on the profile -- access, plan, comp, Stripe
+      // IDs, onboarding, push status -- is written only by the server.
+      function clientFields() {
+        return ['restrictions', 'allergies', 'dislikes', 'staples', 'hide_calories',
+                'track_weight', 'morning_notes', 'targets', 'onboarded'];
+      }
+      function d() { return request.resource.data; }
+      function shortList(k) { return !(k in d()) || (d()[k] is list && d()[k].size() <= 40); }
+      function sane() {
+        return shortList('restrictions') && shortList('allergies') && shortList('dislikes') && shortList('staples')
+          && (!('targets' in d()) || (d().targets is map && d().targets.size() <= 10))
+          && (!('onboarded' in d()) || d().onboarded == false
+              || (resource != null && resource.data.get('onboarded', false) == d().onboarded));
+      }
+
+      allow read, delete: if isOwner();
+      allow create: if isOwner() && d().keys().hasOnly(clientFields()) && sane();
+      allow update: if isOwner() && d().diff(resource.data).affectedKeys().hasOnly(clientFields()) && sane();
+
+      // Logs (messages, meals, workouts, check-ins, weigh-ins, foods, push devices):
+      // the app reads them; only the server writes. One level deep, so this rule
+      // can't match the profile document itself.
+      match /{collection}/{docId} {
+        allow read: if isOwner();
+        allow write: if false;
       }
     }
 

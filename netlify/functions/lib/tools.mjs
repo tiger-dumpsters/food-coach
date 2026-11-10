@@ -314,6 +314,31 @@ async function saveFoods(household, items, uid, FieldValue) {
   }));
 }
 
+// save_profile may only write the fields in its schema (never access, plan, comp, Stripe
+// IDs...), with sane sizes, because the model's input ultimately comes from user text.
+const PROFILE_SCHEMA = () => TOOLS.find((t) => t.name === 'save_profile').input_schema.properties;
+export function profilePatch(input) {
+  const props = PROFILE_SCHEMA();
+  const str = (v, n = 80) => String(v).slice(0, n);
+  const out = {};
+  for (const [k, v] of Object.entries(input || {})) {
+    const spec = props[k];
+    if (!spec || v === null || v === undefined) continue;
+    if (spec.type === 'string') { if (typeof v === 'string' && (!spec.enum || spec.enum.includes(v))) out[k] = str(v); }
+    else if (spec.type === 'number') { if (Number.isFinite(Number(v))) out[k] = Math.max(0, Math.min(Number(v), 100000)); }
+    else if (spec.type === 'boolean') { if (typeof v === 'boolean') out[k] = v; }
+    else if (spec.type === 'array' && Array.isArray(v)) {
+      const en = spec.items?.enum;
+      out[k] = v.filter((x) => typeof x === 'string' && (!en || en.includes(x))).slice(0, 40).map((x) => str(x));
+    } else if (spec.type === 'object' && v && typeof v === 'object') {
+      const t = {};
+      for (const [tk, tv] of Object.entries(v)) if (spec.properties?.[tk] && Number.isFinite(Number(tv))) t[tk] = Math.max(0, Math.min(Number(tv), 100000));
+      if (Object.keys(t).length) out[k] = t;
+    }
+  }
+  return out;
+}
+
 export async function runTool(name, input, ctx) {
   const { userRef, clock, FieldValue, sourceMessageId, household, me } = ctx;
   if (name === 'log_meal' || name === 'update_meal') input = withItemTotals(input);
@@ -377,7 +402,8 @@ export async function runTool(name, input, ctx) {
       return { result: `deleted ${input.kind} ${input.id}`, entry: { kind: input.kind, id: input.id, deleted: true } };
     }
     case 'save_profile': {
-      const patch = clean(input);
+      const patch = profilePatch(input);
+      if (!Object.keys(patch).length) return { result: 'nothing to save', entry: null };
       if (patch.targets) {
         // merge nested targets rather than replace
         for (const [k, v] of Object.entries(patch.targets)) patch[`targets.${k}`] = v;

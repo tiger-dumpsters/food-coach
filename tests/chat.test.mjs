@@ -680,3 +680,17 @@ test('iPhone app notifications: register a token, send through FCM, drop dead to
   await push(preq('alexa', { action: 'unsubscribe-native', token: 'tok-new' }));
   assert.equal([...store.keys()].filter((k) => k.startsWith('users/u2/push/') && store.get(k).fcmToken).length, 0);
 });
+
+test('save_profile only writes its own fields, with sane sizes', async () => {
+  const { profilePatch } = await import('../netlify/functions/lib/tools.mjs');
+  const p = profilePatch({
+    name: 'Sam', comp: true, plan: 'plus', access: true, stripeCustomerId: 'x', push_enabled: true,
+    allergies: Array(100).fill('peanuts'), sex: 'robot', goals: ['feel_full', 'hack'], age: 1e12,
+    targets: { protein_g: 120, admin: 1 }, notes: 'x'.repeat(9999),
+  });
+  assert.deepEqual(Object.keys(p).sort(), ['age', 'allergies', 'goals', 'name', 'targets']);
+  assert.equal(p.allergies.length, 40);
+  assert.deepEqual(p.goals, ['feel_full']);
+  assert.equal(p.age, 100000);
+  assert.deepEqual(p.targets, { protein_g: 120 });
+});
