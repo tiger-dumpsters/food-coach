@@ -6,7 +6,8 @@
 // tools, saves both chat messages, and returns the reply plus the entries it logged.
 
 import { FieldValue } from 'firebase-admin/firestore';
-import { admin, verify, underDailyCap } from './lib/admin.mjs';
+import { admin, verify, underDailyCap, capDay } from './lib/admin.mjs';
+import { spendAllowed, addSpend, BUDGET_MESSAGE } from './lib/spend.mjs';
 import { TOOLS, runTool, foodKey } from './lib/tools.mjs';
 import { buildSystem, totals } from './lib/prompt.mjs';
 import { limitsFor, planFor, UPGRADE } from './lib/plans.mjs';
@@ -194,7 +195,8 @@ export default async (req) => {
   const profileSnap = await userRef.get();
   const limits = limitsFor(profileSnap.exists ? profileSnap.data() : null);
   if (image && !limits.photos) return json(402, { error: UPGRADE.photos, code: 'upgrade', feature: 'photos' });
-  if (!(await underDailyCap(db, uid, clock.day, limits.messagesPerDay))) {
+  const msgCount = await underDailyCap(db, uid, capDay(), limits.messagesPerDay);
+  if (!msgCount) {
     const free = planFor(profileSnap.exists ? profileSnap.data() : null) === 'free';
     return json(429, { error: free ? UPGRADE.cap(limits.messagesPerDay) : "You've hit today's message limit. It resets tomorrow.", code: free ? 'upgrade' : 'cap' });
   }
@@ -275,16 +277,21 @@ export default async (req) => {
   ];
 
   // Free plan: setup and photos aside, everything runs on the fast model.
-  const picked = image ? MODEL_SMART : pickModel(text, profile?.onboarded);
-  const model = limits.smartModel || !profile?.onboarded ? picked : MODEL_FAST;
+  // Setup gets the stronger model, but only for its first messages of the day, so
+  // "redo setup" can't be used as a back door to it.
+  const onboardingSmart = !profile?.onboarded && msgCount <= Number(process.env.ONBOARDING_SMART_MSGS || 20);
+  const picked = image ? MODEL_SMART : pickModel(text, profile?.onboarded || !onboardingSmart);
+  const model = limits.smartModel || onboardingSmart ? picked : MODEL_FAST;
   const entries = [];
   const usage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
   let replyText = '';
   let stopReason = null, partial = false, failed = false, errorDetail = null;
   let activeModel = model;
   let nudged = false;
+  const spendWrites = [];
 
   try {
+    if (!(await spendAllowed(db))) throw Object.assign(new Error('daily spend limit reached'), { code: 'budget' });
     const started = Date.now();
     for (let round = 0; round < MAX_ROUNDS; round++) {
       let resp;
@@ -299,6 +306,7 @@ export default async (req) => {
         resp = await callClaude({ model: activeModel, system, messages });
       }
       for (const k of Object.keys(usage)) usage[k] += resp.usage?.[k] || 0;
+      spendWrites.push(addSpend(db, activeModel, resp.usage).catch((e) => console.error('spend', e.message)));
       stopReason = resp.stop_reason;
 
       const textParts = resp.content.filter(c => c.type === 'text').map(c => c.text.trim()).filter(Boolean);
@@ -368,13 +376,17 @@ export default async (req) => {
     errorDetail = err.message;
     failed = !entries.length;
     const outOfCredit = /credit balance/i.test(err.message);
+    const overBudget = err.code === 'budget';
     replyText = replyText || (entries.length
       ? ''
-      : outOfCredit
-        ? "The coach is taking a short break, so I couldn't log that. Your message is still here; please send it again in a little while. Sorry about that!"
+      : outOfCredit || overBudget
+        ? BUDGET_MESSAGE
         : "Sorry — something went wrong on my end and nothing was logged. Try again in a minute.");
+    if (overBudget) await alertAdmins(db, auth, 'HungerHush hit its daily spending limit', `The coach is paused until midnight UTC. Raise DAILY_SPEND_LIMIT_USD in Netlify if this is real traffic.`).catch((e) => console.error('alert', e.message));
     if (outOfCredit) await alertAdmins(db, auth, 'HungerHush is out of API credit', 'The coach can\'t answer anyone. Top up at console.anthropic.com → Billing.').catch((e) => console.error('alert', e.message));
   }
+
+  await Promise.all(spendWrites);
 
   if (partial) {
     replyText = `${replyText ? replyText + '\n\n' : ''}That was a lot — I logged ${entries.length} entries so far. Paste the rest (from where it stops) and I'll keep going.`;

@@ -41,7 +41,14 @@ async function hasAccess(db, { uid, email }) {
 }
 
 // Per-person daily message cap (a safety net on API spend). Stored server-only in usage/{uid}.
-export async function underDailyCap(db, uid, day, cap = Number(process.env.DAILY_MESSAGE_CAP || 150)) {
+// The day for message limits is always Eastern time, whatever time zone the phone
+// reports -- otherwise changing the zone would hand out a fresh allowance.
+export function capDay(now = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: process.env.CAP_TZ || 'America/New_York' }).format(now);
+}
+
+// Counts one message. Returns today's count including this one, or false if over the cap.
+export async function underDailyCap(db, uid, day = capDay(), cap = Number(process.env.DAILY_MESSAGE_CAP || 150)) {
   const ref = db.collection('usage').doc(uid);
   return db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -49,6 +56,6 @@ export async function underDailyCap(db, uid, day, cap = Number(process.env.DAILY
     const count = d.day === day ? (d.count || 0) : 0;
     if (count >= cap) return false;
     tx.set(ref, { day, count: count + 1 }, { merge: true });
-    return true;
+    return count + 1;
   });
 }

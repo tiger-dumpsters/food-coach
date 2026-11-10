@@ -2,6 +2,7 @@
 // active user's chat, in their morning (first run between 7 am and 2 pm their time).
 
 import { FieldValue } from 'firebase-admin/firestore';
+import { spendAllowed, addSpend } from './lib/spend.mjs';
 import { admin } from './lib/admin.mjs';
 import { occasionFor } from './lib/occasions.mjs';
 import { makeClock, dayMinus } from './chat.mjs';
@@ -45,7 +46,8 @@ function fallback(name, occasion) {
     : `Morning, ${name}. New week, fresh start. I'm here whenever you want to log or need an idea.`;
 }
 
-async function writeNote(facts, name, occasion) {
+async function writeNote(facts, name, occasion, db, budgetOk) {
+  if (!budgetOk) return fallback(name, occasion); // over today's spending ceiling: plain note
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -54,6 +56,7 @@ async function writeNote(facts, name, occasion) {
     });
     if (!res.ok) throw new Error(`Claude API ${res.status}`);
     const data = await res.json();
+    await addSpend(db, MODEL, data.usage, 'morning').catch(() => {});
     const text = data.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n').trim();
     return text || fallback(name, occasion);
   } catch (err) {
@@ -66,6 +69,7 @@ export async function runMorning(now = new Date()) {
   const { db } = admin();
   const users = await db.collection('users').where('onboarded', '==', true).get();
   const sent = [];
+  const budgetOk = await spendAllowed(db);
   await Promise.all(users.docs.map(async (u) => {
     const p = u.data();
     if (p.morning_notes === false) return;
@@ -87,7 +91,7 @@ export async function runMorning(now = new Date()) {
     await ref.set({ lastMorningNote: clock.day }, { merge: true }); // claim first: no double notes
     const name = String(p.name || 'there').split(/\s+/)[0];
     const meals = (await ref.collection('meals').where('day', '>=', dayMinus(clock.day, 3)).get()).docs.map((d) => d.data());
-    const text = await writeNote(factsFor(name, occasion, meals, p, clock.day), name, occasion);
+    const text = await writeNote(factsFor(name, occasion, meals, p, clock.day), name, occasion, db, budgetOk);
     await ref.collection('messages').add({
       role: 'assistant', text, kind: 'morning', entries: [], day: clock.day, createdAt: FieldValue.serverTimestamp(),
     });

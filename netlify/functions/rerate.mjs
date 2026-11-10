@@ -4,6 +4,7 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 import { admin, verify } from './lib/admin.mjs';
+import { spendAllowed, addSpend } from './lib/spend.mjs';
 import { processingMix, dominant, LEVELS } from './lib/tools.mjs';
 
 const MODEL = process.env.MODEL_FAST || 'claude-haiku-5-5';
@@ -54,7 +55,7 @@ const SYSTEM = `You rate foods by processing level. For each meal, list its food
 - ultraprocessed: packaged snacks, chips, cookies, most granola and bars, frozen waffles, sweetened or flavored yogurt, American cheese, deli meats, soda, protein bars and shakes, most packaged sliced bread, flavored syrups.
 Give each item its rough share of the meal's calories. Call rate_meals once with every meal.`;
 
-async function rateChunk(meals) {
+async function rateChunk(meals, db) {
   const list = meals.map((m) => ({
     id: m.id, description: m.description, calories: m.calories,
     ...(m.items?.length ? { items: m.items.map((i) => `${i.qty ? i.qty + ' ' : ''}${i.name}`) } : {}),
@@ -69,6 +70,7 @@ async function rateChunk(meals) {
   });
   if (!res.ok) throw new Error(`Claude API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
+  await addSpend(db, MODEL, data.usage, 'rerate').catch(() => {});
   const call = data.content.find((c) => c.type === 'tool_use' && c.name === 'rate_meals');
   return call?.input?.meals || [];
 }
@@ -108,8 +110,19 @@ export default async (req) => {
   if (who.error) return json(who.status, { error: who.error });
   const { db } = admin();
   const userRef = db.collection('users').doc(who.uid);
-  const profile = (await userRef.get()).data() || {};
-  if (profile.rerated === VERSION) return json(200, { updated: 0, already: true });
+  // Runs once per person: claim the job so repeat or simultaneous calls can't re-run it,
+  // and give up for good after 3 tries.
+  const claim = await db.runTransaction(async (tx) => {
+    const p = (await tx.get(userRef)).data() || {};
+    if (p.rerated === VERSION) return 'done';
+    if ((p.rerateAttempts || 0) >= 3) return 'gave-up';
+    const startedAt = p.rerateStartedAt || 0;
+    if (Date.now() - startedAt < 10 * 60 * 1000) return 'running';
+    tx.set(userRef, { rerateAttempts: (p.rerateAttempts || 0) + 1, rerateStartedAt: Date.now() }, { merge: true });
+    return 'go';
+  });
+  if (claim !== 'go') return json(200, { updated: 0, already: true, status: claim });
+  if (!(await spendAllowed(db))) return json(503, { error: 'Paused for today' });
 
   const since = new Date(Date.now() - 28 * 864e5).toISOString().slice(0, 10);
   const snap = await userRef.collection('meals').where('day', '>=', since).get();
@@ -119,7 +132,7 @@ export default async (req) => {
   const chunks = [];
   for (let i = 0; i < todo.length; i += CHUNK) chunks.push(todo.slice(i, i + CHUNK));
   try {
-    const results = await Promise.all(chunks.map(rateChunk));
+    const results = await Promise.all(chunks.map((c) => rateChunk(c, db)));
     const byId = new Map(todo.map((m) => [m.id, m]));
     const writes = [];
     for (const rated of results.flat()) {

@@ -145,8 +145,19 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
   return [CORE, onboarded ? '' : ONBOARDING, '--- CONTEXT ---\n' + lines.join('\n')].filter(Boolean).join('\n\n');
 }
 
-function profileForPrompt(p) {
+// Only what the coach needs, trimmed: no email, Stripe IDs, plan, push or invite
+// details, and no oversized lists or strings (they'd cost tokens on every message).
+const PROFILE_FOR_COACH = ['name', 'age', 'sex', 'height', 'units', 'goals', 'approach', 'track_weight', 'goal_weight',
+  'restrictions', 'allergies', 'dislikes', 'staples', 'targets', 'hide_calories', 'workout_types', 'workouts_per_week',
+  'preferred_days', 'reminder_level', 'onboarded'];
+export function profileForPrompt(p) {
   if (!p) return { onboarded: false };
-  const { createdAt, updatedAt, usage, ...rest } = p;
-  return rest;
+  const trim = (v) => typeof v === 'string' ? v.slice(0, 80)
+    : Array.isArray(v) ? v.slice(0, 40).map(trim)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).slice(0, 10).map(([k, x]) => [k, trim(x)]))
+    : v;
+  const out = {};
+  for (const k of PROFILE_FOR_COACH) if (p[k] !== undefined && p[k] !== null) out[k] = trim(p[k]);
+  if (!('onboarded' in out)) out.onboarded = false;
+  return out;
 }

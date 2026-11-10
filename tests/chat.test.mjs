@@ -6,12 +6,27 @@ const store = new Map(); // path -> data
 let idc = 0;
 const sentinel = (k, v) => ({ __s: k, v });
 const FieldValue = { serverTimestamp: () => new Date(), increment: (n) => sentinel('inc', n), arrayUnion: (...v) => sentinel('union', v), delete: () => sentinel('del') };
-function applyVal(cur, v) { if (v && v.__s === 'union') return [...new Set([...(cur || []), ...v.v])]; return v; }
+function applyVal(cur, v) {
+  if (v && v.__s === 'union') return [...new Set([...(cur || []), ...v.v])];
+  if (v && v.__s === 'inc') return (typeof cur === 'number' ? cur : 0) + v.v;
+  return v;
+}
+const isPlain = (v) => v && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date) && !v.__s;
+function mergeInto(cur, data) {
+  const out = { ...(cur || {}) };
+  for (const [k, v] of Object.entries(data)) {
+    if (v && v.__s === 'del') delete out[k];
+    else if (isPlain(v) && isPlain(out[k])) out[k] = mergeInto(out[k], v);
+    else if (isPlain(v)) out[k] = mergeInto({}, v);
+    else out[k] = applyVal(out[k], v);
+  }
+  return out;
+}
 function docRef(path) {
   return {
     id: path.split('/').at(-1), path,
     async get() { const d = store.get(path); return { exists: !!d, id: this.id, data: () => d }; },
-    async set(data, opts) { store.set(path, opts?.merge ? { ...(store.get(path) || {}), ...data } : data); },
+    async set(data, opts) { store.set(path, opts?.merge ? mergeInto(store.get(path), data) : data); },
     async update(p) { const cur = { ...(store.get(path) || {}) }; for (const [k, v] of Object.entries(p)) { if (k.includes('.')) { const [a, b] = k.split('.'); cur[a] = { ...(cur[a] || {}) }; if (v && v.__s === 'del') delete cur[a][b]; else cur[a][b] = v; } else if (v && v.__s === 'del') delete cur[k]; else cur[k] = applyVal(cur[k], v); } store.set(path, cur); },
     async delete() { store.delete(path); },
     collection(name) { return colRef(`${path}/${name}`); },
@@ -42,8 +57,12 @@ const lookedUp = [];
 mock.module('firebase-admin/auth', { namedExports: { getAuth: () => ({ verifyIdToken: async (t) => { if (!USERS[t]) throw new Error('bad'); return USERS[t]; }, deleteUser: async (uid) => { deletedAuth.push(uid); }, getUserByEmail: async (e) => { lookedUp.push(e); const u = Object.values(USERS).find((x) => x.email === e); if (!u) throw new Error('no user'); return u; } }) } });
 const fakeDb = {
   collection: (n) => colRef(n),
+  // Transactions run one at a time, like Firestore's (which retries on conflict).
+  _tx: Promise.resolve(),
   async runTransaction(fn) {
-    return fn({ get: (ref) => ref.get(), update: (ref, p) => ref.update(p), set: (ref, d, o) => ref.set(d, o), delete: (ref) => ref.delete() });
+    const run = this._tx.then(() => fn({ get: (ref) => ref.get(), update: (ref, p) => ref.update(p), set: (ref, d, o) => ref.set(d, o), delete: (ref) => ref.delete() }));
+    this._tx = run.catch(() => {});
+    return run;
   },
 };
 mock.module('firebase-admin/firestore', { namedExports: { getFirestore: () => fakeDb, FieldValue } });
@@ -693,4 +712,65 @@ test('save_profile only writes its own fields, with sane sizes', async () => {
   assert.deepEqual(p.goals, ['feel_full']);
   assert.equal(p.age, 100000);
   assert.deepEqual(p.targets, { protein_g: 120 });
+});
+
+test('limits: changing the phone time zone does not reset the daily message count', async () => {
+  process.env.DAILY_MESSAGE_CAP = '2';
+  store.delete('usage/u2');
+  assert.equal((await handler(req('alexa', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
+  assert.equal((await handler(req('alexa', { text: 'toast', tz: 'Pacific/Kiritimati' }))).status, 200);
+  assert.equal((await handler(req('alexa', { text: 'more', tz: 'Pacific/Pago_Pago' }))).status, 429);
+  delete process.env.DAILY_MESSAGE_CAP;
+  store.delete('usage/u2');
+});
+
+test('limits: "redo setup" only gets the stronger model for the first messages of the day', async () => {
+  process.env.TIERS_ENABLED = 'true'; process.env.ONBOARDING_SMART_MSGS = '1';
+  store.set('users/u4', { ...store.get('users/u4'), onboarded: false, comp: false, plan: null });
+  store.delete('usage/u4');
+  let n = calls.length;
+  await handler(req('jo', { text: 'hi, set me up', tz: 'America/New_York' }));
+  assert.equal(calls[n].model, 'claude-sonnet-5-5');
+  n = calls.length;
+  await handler(req('jo', { text: 'eggs and toast', tz: 'America/New_York' }));
+  assert.equal(calls[n].model, 'claude-haiku-5-5');
+  delete process.env.TIERS_ENABLED; delete process.env.ONBOARDING_SMART_MSGS;
+  store.set('users/u4', { ...store.get('users/u4'), onboarded: true });
+});
+
+test('daily spending ceiling: spend is recorded, and over the limit the coach pauses and admins hear once', async () => {
+  const { costOf } = await import('../netlify/functions/lib/spend.mjs');
+  assert.ok(Math.abs(costOf('claude-sonnet-5-5', { input_tokens: 1e6, output_tokens: 1e6 }) - 18) < 1e-9);
+  const day = new Date().toISOString().slice(0, 10);
+  assert.ok(store.get(`spend/${day}`).usd > 0, 'spend recorded');
+  assert.ok(store.get(`spend/${day}`).by.chat > 0);
+  store.delete('config/alerts');
+  process.env.DAILY_SPEND_LIMIT_USD = '0.000001';
+  const n = calls.length, looked = lookedUp.length;
+  const j = await (await handler(req('good', { text: 'eggs', tz: 'America/New_York' }))).json();
+  assert.equal(calls.length, n, 'no Claude call over the ceiling');
+  assert.match(j.reply, /short break/);
+  assert.ok(lookedUp.length > looked, 'admins alerted');
+  assert.ok(store.get('config/alerts')['HungerHush hit its daily spending limit']);
+  delete process.env.DAILY_SPEND_LIMIT_USD;
+});
+
+test('rerate: runs once even if called twice at the same time, and gives up after 3 tries', async () => {
+  const { default: rerate } = await import('../netlify/functions/rerate.mjs');
+  const rreq = () => new Request('http://x/rerate', { method: 'POST', headers: { authorization: 'Bearer alexa' }, body: '{}' });
+  store.set('users/u2', { ...store.get('users/u2'), rerated: null, rerateAttempts: 0, rerateStartedAt: 0 });
+  const [a, b] = await Promise.all([rerate(rreq()), rerate(rreq())]);
+  const statuses = [await a.json(), await b.json()].map((r) => r.status || 'ran');
+  assert.ok(statuses.includes('running') || statuses.includes('done'), JSON.stringify(statuses));
+  store.set('users/u2', { ...store.get('users/u2'), rerated: null, rerateAttempts: 3, rerateStartedAt: 0 });
+  assert.equal((await (await rerate(rreq())).json()).status, 'gave-up');
+});
+
+test('the coach only sees the profile fields it needs, trimmed', async () => {
+  const { profileForPrompt } = await import('../netlify/functions/lib/prompt.mjs');
+  const p = profileForPrompt({ name: 'Sam', email: 'sam@example.com', stripeCustomerId: 'cus_1', plan: 'plus', comp: true, access: true,
+    allergies: ['x'.repeat(5000), ...Array(100).fill('nuts')], onboarded: true, targets: { protein_g: 100 } });
+  assert.deepEqual(Object.keys(p).sort(), ['allergies', 'name', 'onboarded', 'targets']);
+  assert.equal(p.allergies.length, 40);
+  assert.equal(p.allergies[0].length, 80);
 });
