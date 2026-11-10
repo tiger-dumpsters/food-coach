@@ -1,11 +1,15 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
+  # Run the test suite on every deploy: if a test fails, the deploy stops and the
+  # live site keeps the last good version.
+  command = "npm test"
 
 # The Firebase *web* API key is a public identifier that must ship to the browser
 # (access is controlled by Firestore rules), so exempt just that value from
 # secrets scanning. Real secrets stay in Netlify env vars and are still scanned.
 [build.environment]
+  NODE_VERSION = "22"
   SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES = "AIzaSyCWePmqjWQfbo5lb9UZd4qNJIVWv6sCCm4"
 
 [functions]

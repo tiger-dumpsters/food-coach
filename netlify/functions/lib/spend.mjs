@@ -1,17 +1,18 @@
 // A whole-app daily ceiling on Claude spending, so a bug, a bad actor, or a busy day
 // can't run up the bill. Every Claude call records its estimated cost in
-// spend/{UTC day}; once the day's total passes DAILY_SPEND_LIMIT_USD (default $15),
+// spend/{UTC day}; once the day's total passes DAILY_SPEND_LIMIT_USD (default $3),
 // the coach pauses until tomorrow and the admins get a phone alert.
 //
-// Prices are per million tokens and only used for this estimate. Override with
-// PRICE_FAST / PRICE_SMART as "input,output" (e.g. "1,5") if Anthropic's prices change.
+// Prices are per million tokens and only used for this estimate (Nov 2026: Haiku 5.5
+// $0.10/$0.50 for prompts under 100K tokens, which ours always are; Sonnet 5.5 $2/$10).
+// Override with PRICE_FAST / PRICE_SMART as "input,output" if Anthropic's prices change.
 
 import { FieldValue } from 'firebase-admin/firestore';
 
 function prices(model) {
   const smart = /sonnet|opus/i.test(model);
   const env = smart ? process.env.PRICE_SMART : process.env.PRICE_FAST;
-  const [inp, out] = (env || (smart ? '3,15' : '1,5')).split(',').map(Number);
+  const [inp, out] = (env || (smart ? '2,10' : '0.1,0.5')).split(',').map(Number);
   return { inp, out, cacheRead: inp * 0.1, cacheWrite: inp * 1.25 };
 }
 
@@ -22,7 +23,7 @@ export function costOf(model, usage = {}) {
 }
 
 const dayKey = () => new Date().toISOString().slice(0, 10);
-export const dailyLimit = () => Number(process.env.DAILY_SPEND_LIMIT_USD || 15);
+export const dailyLimit = () => Number(process.env.DAILY_SPEND_LIMIT_USD || 3);
 
 export async function spendAllowed(db) {
   const snap = await db.collection('spend').doc(dayKey()).get();

@@ -77,21 +77,35 @@ export function pickModel(text, onboarded) {
   return MODEL_FAST;
 }
 
-async function callClaude({ model, system, messages }) {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': process.env.ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, tools: TOOLS, messages }),
-  });
-  if (!res.ok) {
+// One call to Claude, with a time limit (so a stuck call can't run past the function's
+// own limit) and one quick retry when Claude is busy or briefly down.
+const RETRYABLE = [408, 429, 500, 502, 503, 504, 529];
+export async function callClaude({ model, system, messages, timeoutMs = 30_000 }) {
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({ model, max_tokens: MAX_TOKENS, system, tools: TOOLS, messages }),
+        signal: AbortSignal.timeout(Math.max(5_000, timeoutMs)),
+      });
+    } catch (err) {
+      if (attempt === 0 && err.name !== 'TimeoutError') { await new Promise((r) => setTimeout(r, 800)); continue; }
+      throw new Error(err.name === 'TimeoutError' ? `Claude API timeout after ${Math.round(timeoutMs / 1000)}s` : `Claude API network error: ${err.message}`);
+    }
+    if (res.ok) return res.json();
     const detail = await res.text();
+    if (attempt === 0 && RETRYABLE.includes(res.status) && !/credit balance/i.test(detail)) {
+      await new Promise((r) => setTimeout(r, 800));
+      continue;
+    }
     throw new Error(`Claude API ${res.status}: ${detail.slice(0, 300)}`);
   }
-  return res.json();
 }
 
 // Turn saved chat history into alternating user/assistant turns.
@@ -287,14 +301,14 @@ const handler = async (req) => {
     for (let round = 0; round < MAX_ROUNDS; round++) {
       let resp;
       try {
-        resp = await callClaude({ model: activeModel, system, messages });
+        resp = await callClaude({ model: activeModel, system, messages, timeoutMs: Math.min(30_000, TIME_BUDGET_MS - (Date.now() - started)) });
       } catch (err) {
         // One fallback: if the stronger model rejects the request, try the fast one.
         if (activeModel === MODEL_FAST || /credit balance/i.test(err.message)) throw err;
         console.error('Smart model failed, falling back', err.message);
         errorDetail = err.message;
         activeModel = MODEL_FAST;
-        resp = await callClaude({ model: activeModel, system, messages });
+        resp = await callClaude({ model: activeModel, system, messages, timeoutMs: Math.min(30_000, TIME_BUDGET_MS - (Date.now() - started)) });
       }
       for (const k of Object.keys(usage)) usage[k] += resp.usage?.[k] || 0;
       spendWrites.push(addSpend(db, activeModel, resp.usage).catch((e) => console.error('spend', e.message)));

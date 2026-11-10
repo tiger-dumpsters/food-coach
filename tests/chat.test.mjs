@@ -742,7 +742,8 @@ test('limits: "redo setup" only gets the stronger model for the first messages o
 
 test('daily spending ceiling: spend is recorded, and over the limit the coach pauses and admins hear once', async () => {
   const { costOf } = await import('../netlify/functions/lib/spend.mjs');
-  assert.ok(Math.abs(costOf('claude-sonnet-5-5', { input_tokens: 1e6, output_tokens: 1e6 }) - 18) < 1e-9);
+  assert.ok(Math.abs(costOf('claude-sonnet-5-5', { input_tokens: 1e6, output_tokens: 1e6 }) - 12) < 1e-9);
+  assert.ok(Math.abs(costOf('claude-haiku-5-5', { input_tokens: 1e6, output_tokens: 1e6 }) - 0.6) < 1e-9);
   const day = new Date().toISOString().slice(0, 10);
   assert.ok(store.get(`spend/${day}`).usd > 0, 'spend recorded');
   assert.ok(store.get(`spend/${day}`).by.chat > 0);
@@ -832,4 +833,32 @@ test('speed: a simple log that comes back with its reply takes one coach call, a
   await handler(req('alexa', { text: 'had oatmeal, what should I eat for lunch?', tz: 'America/New_York' }));
   assert.equal(calls.length - n, 2, 'two calls');
   queue.length = 0;
+});
+
+test('reliability: Claude busy (529) gets one quick retry; a stuck call times out', async () => {
+  const { callClaude } = await import('../netlify/functions/chat.mjs');
+  const realFetch = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = async () => (++n === 1
+    ? { ok: false, status: 529, text: async () => 'overloaded' }
+    : { ok: true, json: async () => ({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }) });
+  const r = await callClaude({ model: 'claude-haiku-5-5', system: [], messages: [] });
+  assert.equal(n, 2);
+  assert.equal(r.content[0].text, 'ok');
+  // a second busy signal is not retried forever
+  n = 0;
+  globalThis.fetch = async () => { n++; return { ok: false, status: 529, text: async () => 'overloaded' }; };
+  await assert.rejects(callClaude({ model: 'claude-haiku-5-5', system: [], messages: [] }), /529/);
+  assert.equal(n, 2);
+  // out of credit is not retried
+  n = 0;
+  globalThis.fetch = async () => { n++; return { ok: false, status: 400, text: async () => 'Your credit balance is too low' }; };
+  await assert.rejects(callClaude({ model: 'claude-haiku-5-5', system: [], messages: [] }), /credit/);
+  assert.equal(n, 1);
+  // a call that hangs is cut off
+  globalThis.fetch = (url, init) => new Promise((_, rej) => init.signal.addEventListener('abort', () => rej(Object.assign(new Error('aborted'), { name: 'TimeoutError' }))));
+  const keepAlive = setTimeout(() => {}, 7_000); // AbortSignal.timeout's timer doesn't hold the test open
+  await assert.rejects(callClaude({ model: 'claude-haiku-5-5', system: [], messages: [], timeoutMs: 5_000 }), /timeout/);
+  clearTimeout(keepAlive);
+  globalThis.fetch = realFetch;
 });
