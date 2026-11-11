@@ -307,7 +307,10 @@ async function setupPurchases(uid) {
   } catch (e) { console.warn('purchases', e); }
   if (state.view === 'settings') renderSettings();
 }
+// Older app builds from before in-app purchase and Apple Health don't have these plugins.
+const UPDATE_NOTE = '<p class="sub">Update HungerHush to the latest version (App Store or TestFlight) to use this.</p>';
 function iapHtml() {
+  if (!plugin('Purchases')) return UPDATE_NOTE;
   if (!iap.ready) return '<p class="sub">Loading Plus…</p>';
   const p = iap.pkg.product;
   const intro = p.introPrice && Number(p.introPrice.price) === 0
@@ -355,7 +358,7 @@ function healthHtml() {
   if (!IOS_APP) return '';
   return `<section class="panel" id="health-panel"><h2>Apple Health</h2>
     <p class="disclaimer">Bring in workouts from your iPhone and Apple Watch automatically, so you don't have to log them. HungerHush only reads workouts.</p>
-    ${healthOn()
+    ${!plugin('Health') ? UPDATE_NOTE : healthOn()
       ? '<p class="saved-note" style="margin-top:8px">Connected. Workouts sync when you open the app.</p><div class="btn-row" style="margin-top:8px"><button class="btn small" id="health-sync">Sync now</button></div>'
       : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="health-connect" style="width:auto">Connect Apple Health</button></div>'}
     <p id="health-msg" class="sub" hidden></p></section>`;
