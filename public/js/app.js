@@ -340,7 +340,8 @@ function bindIap() {
     e.target.disabled = true;
     try {
       const { customerInfo } = await P.restorePurchases();
-      const active = !!customerInfo?.entitlements?.active?.plus;
+      const ents = customerInfo?.entitlements?.active || {};
+      const active = !!(ents.plus || ents.hungerhush_pro);
       await afterApplePurchase(active ? 'Restored. You\'re on Plus.' : 'No active Plus subscription found for this Apple ID.');
     } catch (err) { const m = $('#iap-msg'); if (m) { m.textContent = `Couldn't restore: ${err.message || err.code}`; m.hidden = false; } }
     e.target.disabled = false;

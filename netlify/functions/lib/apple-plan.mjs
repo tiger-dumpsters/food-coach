@@ -6,7 +6,8 @@
 
 import { FieldValue } from 'firebase-admin/firestore';
 
-export const ENTITLEMENT = 'plus';
+// RevenueCat entitlement IDs that mean Plus (RevenueCat auto-created hungerhush_pro).
+export const ENTITLEMENTS = ['plus', 'hungerhush_pro'];
 
 // Write an Apple subscription state onto the profile. eventSec orders updates so an
 // old event that arrives late can't undo a newer one (same field Stripe uses).
@@ -64,7 +65,7 @@ export async function syncFromRevenueCat(db, uid) {
   });
   if (!res.ok) throw new Error(`RevenueCat ${res.status}`);
   const { subscriber = {} } = await res.json();
-  const ent = subscriber.entitlements?.[ENTITLEMENT];
+  const ent = ENTITLEMENTS.map((k) => subscriber.entitlements?.[k]).find(Boolean);
   if (!ent) return { synced: true, plus: false };
   const expiresAtMs = ent.expires_date ? Date.parse(ent.expires_date) : null;
   const sub = subscriber.subscriptions?.[ent.product_identifier] || {};

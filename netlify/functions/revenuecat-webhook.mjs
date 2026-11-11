@@ -5,7 +5,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import { admin } from './lib/admin.mjs';
-import { applyApplePlan, stateFromEvent } from './lib/apple-plan.mjs';
+import { applyApplePlan, stateFromEvent, ENTITLEMENTS } from './lib/apple-plan.mjs';
 import { monitored, reportError, alertAdmins } from './lib/monitor.mjs';
 
 const text = (status, body) => new Response(body, { status });
@@ -26,7 +26,7 @@ const handler = async (req) => {
   const e = body.event || {};
   const state = stateFromEvent(e);
   if (!state) return text(200, 'ignored');
-  if (e.entitlement_ids && !e.entitlement_ids.includes('plus')) return text(200, 'not plus');
+  if (e.entitlement_ids && !e.entitlement_ids.some((id) => ENTITLEMENTS.includes(id))) return text(200, 'not plus');
   const { db, auth } = admin();
   const uid = e.app_user_id && !String(e.app_user_id).startsWith('$RCAnonymousID') ? e.app_user_id : e.original_app_user_id;
   try {

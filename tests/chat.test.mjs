@@ -878,7 +878,7 @@ test('App Store purchases: RevenueCat webhook sets Plus, cancel keeps it until e
   const { planFor } = await import('../netlify/functions/lib/plans.mjs');
   const send = (event, auth = 'rc-secret') => hook(new Request('http://x/rc', { method: 'POST', headers: { authorization: auth }, body: JSON.stringify({ event }) }));
   store.set('users/u4', { ...store.get('users/u4'), comp: false, plan: null, planStatus: null, planEventAt: 0, planSource: null });
-  const base = { app_user_id: 'u4', product_id: 'hungerhush_plus_monthly', entitlement_ids: ['plus'], environment: 'SANDBOX' };
+  const base = { app_user_id: 'u4', product_id: 'hungerhush_plus_monthly', entitlement_ids: ['hungerhush_pro'], environment: 'SANDBOX' };
   const future = Date.now() + 30 * 864e5;
   assert.equal((await send({ ...base, type: 'INITIAL_PURCHASE' }, 'wrong')).status, 401);
   assert.equal((await send({ ...base, type: 'INITIAL_PURCHASE', period_type: 'TRIAL', expiration_at_ms: future, event_timestamp_ms: 1000_000 })).status, 200);
