@@ -196,6 +196,7 @@ export const TOOLS = [
         workouts_per_week: { type: 'number' },
         preferred_days: { type: 'array', items: { type: 'string' } },
         reminder_level: { type: 'string', enum: ['quiet', 'normal', 'accountability'] },
+        coach_style: { type: 'string', enum: ['quiet', 'balanced', 'hands_on'], description: 'How much coaching to add after logs: quiet = just log, balanced = a short tip when useful (default), hands_on = more look-ahead.' },
         onboarded: { type: 'boolean' },
       },
     },

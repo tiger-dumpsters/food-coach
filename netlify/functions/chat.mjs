@@ -275,8 +275,10 @@ const handler = async (req) => {
     messages.push({ role: 'user', content: userContent });
   }
 
+  const lastCoachAt = [...history].reverse().find((m) => m.role === 'assistant')?.createdAt || null;
+  const recentWorkouts = workouts.filter((w) => w.day >= dayMinus(clock.day, 6)).sort((a, b) => (a.at || 0) - (b.at || 0));
   const systemText = buildSystem({
-    profile, clock, today, week, recentWeights, hungerLinks, knownFoods, insights,
+    profile, clock, today, week, recentWeights, hungerLinks, knownFoods, insights, recentWorkouts, lastCoachAt,
     household: household ? { members: household.members.map((m) => m.name), me: me.name, pantry: household.pantry } : null,
   });
   const [core, context] = splitSystem(systemText);

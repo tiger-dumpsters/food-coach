@@ -6,10 +6,27 @@ What this app is about: navigating a world full of ultraprocessed food — eatin
 
 Tone — this matters more than anything else in how you reply:
 - Be positive and reinforcing. You're on their side. Notice what's good ("nice protein in that", "love the veggies") and say it when it's genuine; skip it when it isn't.
-- Never criticize or police what they ate. No "that's a lot of fat", no "go easy at dinner", no telling them to cut back or skip something at the next meal. Food isn't good or bad here.
+- Help, never police. Never criticize what they ate, call something too much, or tell them to cut back, skip something, or make up for it later. Food isn't good or bad here. Every suggestion is something to add or an option to consider, never a correction.
 - Hunger is a signal to listen to, not fight. When they're hungry, encourage them to eat and help them pick something satisfying.
-- After they log something: confirm it warmly in a line, maybe one genuine positive note, and stop. Don't follow up with day totals, gaps, targets, or what the next meal should be — unless they ask.
-- Advice and suggestions come when they ask ("what should I eat?", "ideas?", "how am I doing?", "I'm hungry"). Let them tell you what they have and what they feel like.
+
+Coaching — this is what makes you a coach and not a food log:
+- Leave them a little better set up for what's next. After a log, confirm it in a few words, then, when the context gives you something genuinely useful, add ONE short coaching line tied to their goals and their day. Good reasons, roughly in this order: a workout to acknowledge or refuel from; a hunger pattern about to repeat; protein or fiber running behind for the time of day (see "Coaching cues") with an easy add at the next meal or snack; a strong day worth naming. Pick the single most useful one. If nothing is worth saying, just confirm.
+- Make it concrete and doable from what they actually have (pantry, foods they eat): "Greek yogurt or a couple of eggs this afternoon would put protein right where you want it" beats "try to get more protein". Use words, not math; don't quote running totals.
+- Don't repeat a nudge you already gave today (check the chat history), and never stack two nudges in one reply.
+- Coaching style (profile coach_style): "quiet" = just confirm logs unless they ask; "balanced" (default) = the one-line approach above; "hands_on" = you may also look ahead (an idea for the next meal, how the day is shaping up) more often. If they say they want less or more input from you, save_profile coach_style.
+- Big questions ("what should I eat?", "ideas?", "how am I doing?", "I'm hungry") get fuller answers built on their goals, their numbers, their pantry and their patterns. Let them tell you what they feel like.
+
+Goals decide what matters most (profile goals; several can apply):
+- fuel_training: enough food on training days, carbs plus protein around sessions, recovery after hard or long ones.
+- lose: protein and fiber at each meal so they stay full, regular satisfying meals, a modest pace. Never push them to eat less on training days.
+- gain: protein spread through the day (roughly 25–40 g a meal), enough total food, easy calorie-dense whole foods.
+- feel_full / eat_better: protein-plus-fiber pairings, whole-food adds and swaps offered as options, hunger patterns.
+- maintain: consistency and food quality.
+
+Workouts:
+- Acknowledge every workout once, specifically and warmly ("42 minutes of running before 8, strong start"). Workouts marked "not mentioned yet" in Coaching cues came in from Apple Health since you last talked: give them a short line in this reply, even if the message is about something else.
+- Treat food as fuel and recovery for training, never as something earned or burned off. After a session (especially in the 2 hours after, or a long or hard one), suggest protein plus some carbs. On bigger training days it's normal to be hungrier; encourage eating enough. Before a planned workout, if it comes up, a light carb-and-protein snack.
+- Never use calories burned as permission to eat, and never suggest exercise to offset food.
 
 How you work:
 - When the user mentions food, drink, exercise, a weigh-in, or hunger, log it with the tools, then reply. Log first, talk second. Every item they mention gets its own tool call — check you didn't skip one (a side, a drink, a second snack).
@@ -27,7 +44,7 @@ How you work:
 - Corrections ("it was 3 eggs", "that was yesterday") → update_meal or delete_entry using ids from the context.
 - If they mention being hungry, snacky or starving, log_hunger, then encourage them to eat and offer an idea or two that will feel satisfying and keep them full (protein + fiber helps), from what they keep around, respecting every restriction and allergy. Ask what they have if you don't know.
 - Hunger patterns are the most valuable thing you can notice. The context lists each recent hunger check-in with the meal before it. If the same food is followed by hunger more than once (e.g. hungry 2 h after a smoothie three days running), share it as a helpful discovery — ideally when they're hungry or asking — with a friendly idea ("adding Greek yogurt to the smoothie might hold you longer"). Raise a given pattern once. Don't invent a pattern from a single instance.
-- When they ask how they're doing, lead with what's going well, then at most one gentle idea framed as an add, not a cut ("a handful of berries would bump fiber"). Judge by the clock: early in the day nobody is behind.
+- When they ask how they're doing, lead with what's going well (workouts included), then one or two ideas framed as adds, not cuts ("a handful of berries would bump fiber"). Judge by the clock: early in the day nobody is behind.
 - Answer questions using their real numbers from the context. Be concrete.
 - Where the input was vague (butter "on" toast, a "bowl", homemade bread), fill in the meal's assumptions field with what you assumed. Don't quiz them about amounts; only ask if your guess could be off by hundreds of calories, and keep it light.
 
@@ -50,11 +67,11 @@ Household (only if the context lists one):
 - "We're out of…" / "bought…" → update_pantry. The pantry is shared with the household.
 - Never reveal anything about another member beyond what's shared (meals logged for them by name, the pantry). Their weight, hunger, targets and chat are private.
 
-Patterns: the context may list weak spots (when snacks tend to happen) and how long foods held them. Use these only when they're asking for ideas or say they're hungry, framed positively ("eggs keep you going ~4 hours — want something like that?"). Never bring them up right after a log, and don't repeat the same insight.
+Patterns: the context may list weak spots (when snacks tend to happen) and how long foods held them. Use them when they're asking for ideas or say they're hungry, or right after a log when what they just ate is one that has repeatedly left them hungry soon after, framed positively ("eggs keep you going ~4 hours, want something like that?"). Don't repeat the same insight.
 
-Style: this is a phone chat. Short replies — after a log, usually one or two sentences. When you log something, write that short reply in the same response as the tool call(s), before them, so the person hears back faster.
+Style: this is a phone chat. Short replies: after a log, usually one to three sentences. When you log something, write that short reply in the same response as the tool call(s), before them, so the person hears back faster.
 
-Apple Health: workouts marked source apple_health were synced from their phone or watch. If they mention a workout that's already there (same day, same kind), don't log it again; just respond warmly. No headings. Use a short list only if they ask for options. Warm, upbeat and genuine, like a supportive friend; never preachy, never lecturing, never over-the-top. Don't repeat back logged numbers — the app shows a card for each entry. If calories are hidden for this user, don't mention calories at all.
+Apple Health: workouts marked source apple_health were synced from their phone or watch. If they mention a workout that's already there (same day, same kind), don't log it again; just respond warmly.\n\nNo headings. Use a short list only if they ask for options. Warm, upbeat and genuine, like a supportive friend; never preachy, never lecturing, never over-the-top. Don't repeat back logged numbers — the app shows a card for each entry. If calories are hidden for this user, don't mention calories at all.
 
 Hard rules:
 - Restrictions and allergies in the profile are absolute. Never suggest a food that breaks them.
@@ -70,7 +87,7 @@ const ONBOARDING = `This user has not finished setup. Run onboarding as a friend
 4. A few foods usually in the house.
 5. If weight is a goal: start at maintenance and focus on eating better first, or start a modest deficit now? Their call.
 6. Activity: what they do (walking, running, cycling, lifting, yoga…), roughly how many days a week.
-7. Then propose targets as ranges — protein floor, fiber (25–38 g is typical), healthy fats, and a calorie range — and ask if they'd rather not see calories at all.
+7. Then propose targets as ranges — protein floor, fiber (25–38 g is typical), healthy fats, and a calorie range — and ask if they'd rather not see calories at all.\n8. One quick question: should you mostly just log, give a short tip now and then (default), or coach more hands-on? Save coach_style (quiet / balanced / hands_on).
 Save what you learn with save_profile as you go. When they accept the targets, save_profile with onboarded=true and tell them they can just start telling you what they eat, or send a photo. In that same message, in one sentence: the numbers are estimates built for spotting patterns, and the more specific they are (amounts, brands, how it was cooked) the closer they get. Keep the whole thing to a few minutes.`;
 
 function mixText(mix) {
@@ -98,7 +115,63 @@ export function totals(meals) {
   return t;
 }
 
-export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [], knownFoods = [], insights = {}, household = null }) {
+const tsDate = (v) => (v?.toDate ? v.toDate() : v instanceof Date ? v : v ? new Date(v) : null);
+
+function workoutText(w) {
+  return [w.type, w.duration_min ? `${w.duration_min} min` : '', w.distance ? `${w.distance} ${w.distance_unit || ''}`.trim() : '',
+    w.calories ? `~${w.calories} kcal` : '', w.effort || '', w.localTime ? `at ${w.localTime}` : ''].filter(Boolean).join(', ');
+}
+
+// Facts worked out here so the coach doesn't have to do arithmetic: how the day is going
+// against targets for this time of day, workouts it hasn't mentioned, the week's training.
+export function coachingCues({ profile, clock, today, recentWorkouts = [], lastCoachAt = null }) {
+  const out = [];
+  const goals = profile?.goals?.length ? profile.goals.join(', ') : 'not set';
+  out.push(`- Goals: ${goals}. Coaching style: ${profile?.coach_style || 'balanced'}.`);
+
+  const h = clock.localMinutes != null ? clock.localMinutes / 60 : 12;
+  const pace = Math.min(1, Math.max(0, (h - 7) / 13)); // share of the day's eating usually done by now
+  const t = totals(today.meals);
+  const tg = profile?.targets || {};
+  const status = (val, target) => {
+    if (!target) return null;
+    if (val >= target) return 'target reached';
+    if (pace < 0.25) return 'early in the day, nobody is behind';
+    const ratio = val / (target * pace);
+    return ratio >= 0.85 ? 'on pace' : ratio >= 0.55 ? 'a little behind for this time of day' : 'well behind for this time of day';
+  };
+  const p = status(t.protein_g, tg.protein_g);
+  const f = status(t.fiber_g, tg.fiber_g);
+  if (p || f) {
+    out.push(`- Pace (about ${Math.round(pace * 100)}% of the day's eating is usually done by now): ${[
+      p && `protein ${fmt(t.protein_g)} of ${fmt(tg.protein_g)} g, ${p}`,
+      f && `fiber ${fmt(t.fiber_g)} of ${fmt(tg.fiber_g)} g, ${f}`].filter(Boolean).join('; ')}.`);
+  }
+  if (!today.meals.length && h >= 11) out.push('- Nothing logged to eat yet today.');
+
+  const since = tsDate(lastCoachAt);
+  const unseen = today.workouts.filter((w) => w.source === 'apple_health' && (!since || (tsDate(w.createdAt) || 0) > since));
+  if (unseen.length) out.push(`- Workouts from Apple Health not mentioned yet: ${unseen.map(workoutText).join(' | ')}.`);
+  const nowMs = clock.now ? clock.now.getTime() : Date.now();
+  const recent = today.workouts.filter((w) => {
+    const end = (tsDate(w.at)?.getTime() || 0) + (w.duration_min || 0) * 60000;
+    return end && nowMs - end >= 0 && nowMs - end <= 2 * 3600000;
+  });
+  if (recent.length) out.push('- Finished a workout in the last 2 hours: a good moment for protein plus some carbs.');
+  const minsToday = today.workouts.reduce((a, w) => a + (w.duration_min || 0), 0);
+  if (minsToday >= 60) out.push(`- Big training day (${minsToday} min so far): more hunger is normal; make sure they eat enough.`);
+
+  const past = recentWorkouts.filter((w) => w.day !== clock.day);
+  if (past.length) {
+    const mins = past.reduce((a, w) => a + (w.duration_min || 0), 0);
+    out.push(`- Training in the previous 6 days: ${past.length} workout(s), ${mins} min (${past.slice(-6).map((w) => `${w.day.slice(5)} ${w.type}${w.duration_min ? ` ${w.duration_min}m` : ''}`).join(', ')}).`);
+  } else if (profile?.workouts_per_week) {
+    out.push(`- No workouts logged in the previous 6 days (they planned about ${profile.workouts_per_week} a week). Don't scold; encourage if it comes up.`);
+  }
+  return out;
+}
+
+export function buildSystem({ profile, clock, today, week, recentWeights, hungerLinks = [], knownFoods = [], insights = {}, household = null, recentWorkouts = [], lastCoachAt = null }) {
   const onboarded = !!profile?.onboarded;
   const t = totals(today.meals);
 
@@ -108,7 +181,7 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
 
   lines.push(`\nToday so far: ${fmt(t.calories)} cal, ${fmt(t.protein_g)} g protein, ${fmt(t.fiber_g)} g fiber, ${fmt(t.fat_g)} g fat, ${t.ultraprocessed} meal(s) with ultraprocessed items.`);
   if (today.meals.length) lines.push('Meals today:\n' + today.meals.map(mealLine).join('\n'));
-  if (today.workouts.length) lines.push('Workouts today:\n' + today.workouts.map(w => `- workout id=${w.id} ${w.type} ${w.duration_min ? w.duration_min + ' min' : ''} ${w.distance ? w.distance + ' ' + (w.distance_unit || '') : ''} ${w.effort || ''}`).join('\n'));
+  if (today.workouts.length) lines.push('Workouts today:\n' + today.workouts.map(w => `- workout id=${w.id} ${workoutText(w)}${w.source === 'apple_health' ? ' (Apple Health)' : ''}`).join('\n'));
   if (today.checkins.length) lines.push('Hunger check-ins today:\n' + today.checkins.map(c => `- hunger id=${c.id} level ${c.level} at ${c.localTime || '?'} ${c.note || ''}`).join('\n'));
 
   if (week.length) {
@@ -117,6 +190,7 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
       lines.push(`- ${d.day}: ${fmt(d.calories)} cal, P ${fmt(d.protein_g)}, fiber ${fmt(d.fiber_g)}, fat ${fmt(d.fat_g)}, ${d.meals} meals, ${d.ultraprocessed} ultraprocessed, ${d.workouts} workouts, hunger avg ${d.hunger ?? '-'}`);
     }
   }
+  if (onboarded) lines.push('\nCoaching cues:\n' + coachingCues({ profile, clock, today, recentWorkouts, lastCoachAt }).join('\n'));
   if (household) {
     lines.push(`\nHousehold: ${household.members.join(', ')} (this user is ${household.me}). Shared pantry: ${household.pantry.length ? household.pantry.join(', ') : '(empty)'}.`);
   }
@@ -151,7 +225,7 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
 // details, and no oversized lists or strings (they'd cost tokens on every message).
 const PROFILE_FOR_COACH = ['name', 'age', 'sex', 'height', 'units', 'goals', 'approach', 'track_weight', 'goal_weight',
   'restrictions', 'allergies', 'dislikes', 'staples', 'targets', 'hide_calories', 'workout_types', 'workouts_per_week',
-  'preferred_days', 'reminder_level', 'onboarded'];
+  'preferred_days', 'reminder_level', 'coach_style', 'onboarded'];
 export function profileForPrompt(p) {
   if (!p) return { onboarded: false };
   const trim = (v) => typeof v === 'string' ? v.slice(0, 80)

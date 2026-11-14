@@ -444,13 +444,42 @@ test('flag: saves the reply with recent context for review and marks the message
   assert.equal(other.status, 404);
 });
 
-test('coach instructions: positive tone, no unprompted totals or next-meal advice', async () => {
+test('coach instructions: positive, never policing, one goal-based coaching line', async () => {
   const { buildSystem } = await import('../netlify/functions/lib/prompt.mjs');
   const sys = buildSystem({ profile: { onboarded: true }, clock: makeClock('America/New_York'), today: { meals: [], workouts: [], checkins: [] }, week: [], recentWeights: [] });
   assert.match(sys, /positive and reinforcing/);
-  assert.match(sys, /Never criticize or police what they ate/);
-  assert.match(sys, /Don't follow up with day totals, gaps, targets, or what the next meal should be/);
-  assert.doesNotMatch(sys, /Point out gaps when they matter/);
+  assert.match(sys, /Help, never police/);
+  assert.match(sys, /add ONE short coaching line tied to their goals/);
+  assert.match(sys, /never as something earned or burned off/);
+  assert.match(sys, /Coaching cues:/);
+  assert.doesNotMatch(sys, /Don't follow up with day totals, gaps, targets/);
+});
+
+test('coaching cues: pace against targets, unmentioned Apple Health workouts, recovery window, week of training', async () => {
+  const { coachingCues } = await import('../netlify/functions/lib/prompt.mjs');
+  const now = new Date('2026-11-14T19:30:00Z'); // 2:30 PM Eastern
+  const clock = makeClock('America/New_York', now);
+  const lastCoachAt = new Date('2026-11-14T15:00:00Z');
+  const run = { id: 'hk_1', day: clock.day, type: 'Running', duration_min: 40, calories: 410, source: 'apple_health',
+    at: new Date('2026-11-14T18:00:00Z'), createdAt: new Date('2026-11-14T19:00:00Z'), localTime: '1:00 PM' };
+  const cues = coachingCues({
+    profile: { goals: ['fuel_training', 'lose'], targets: { protein_g: 120, fiber_g: 30 } },
+    clock,
+    today: { meals: [{ protein_g: 20, fiber_g: 4 }], workouts: [run], checkins: [] },
+    recentWorkouts: [{ day: '2026-11-12', type: 'Yoga', duration_min: 30 }, run],
+    lastCoachAt,
+  }).join('\n');
+  assert.match(cues, /Goals: fuel_training, lose\. Coaching style: balanced/);
+  assert.match(cues, /protein 20 of 120 g, well behind for this time of day/);
+  assert.match(cues, /not mentioned yet: Running, 40 min, ~410 kcal/);
+  assert.match(cues, /last 2 hours: a good moment for protein plus some carbs/);
+  assert.match(cues, /previous 6 days: 1 workout\(s\), 30 min \(11-12 Yoga 30m\)/);
+
+  // Once the coach has replied after the sync, it isn't flagged again; early morning nobody is behind.
+  const later = coachingCues({ profile: { targets: { protein_g: 120 } }, clock: makeClock('America/New_York', new Date('2026-11-14T12:30:00Z')),
+    today: { meals: [{ protein_g: 5 }], workouts: [run], checkins: [] }, lastCoachAt: new Date('2026-11-14T19:05:00Z') }).join('\n');
+  assert.doesNotMatch(later, /not mentioned yet/);
+  assert.match(later, /early in the day, nobody is behind/);
 });
 
 test('occasions: holidays and Mondays', async () => {
