@@ -688,6 +688,7 @@ function renderThread() {
   el.innerHTML = html;
   el.querySelectorAll('.blur').forEach((b) => b.addEventListener('click', () => b.classList.toggle('revealed')));
   bindFlags(el);
+  bindHunger(el);
   if (!state.flagging) scrollThread();
 }
 
@@ -747,10 +748,40 @@ function msgHtml(m, at) {
   return `
     <div class="msg ${m.role === 'user' ? 'user' : 'assistant'}">
       <div class="bubble">${thumb}${body}</div>
+      ${m.kind === 'hungercheck' && m.id ? hungerButtons(m) : ''}
       ${cards ? `<div class="cards">${cards}</div>` : ''}
       <span class="time">${esc(hhmm(at))}${flag ? ` · ${flag}` : ''}</span>
       ${form}
     </div>`;
+}
+
+function toast(text) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = text; t.setAttribute('role', 'status');
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2600);
+}
+
+// One-tap answer to a hunger check (sent a few hours after a meal by lib/nudges.mjs).
+const HUNGER_LABELS = { 1: 'Full', 2: 'Satisfied', 3: 'Peckish', 4: 'Hungry', 5: 'Starving' };
+function hungerButtons(m) {
+  if (m.answered) {
+    return `<div class="hunger-pick answered"><span>Logged: ${m.answered} · ${esc(HUNGER_LABELS[m.answered] || '')}</span>${m.answered >= 4
+      ? '<button type="button" class="chip" data-hunger-idea>Get a filling idea</button>' : ''}</div>`;
+  }
+  return `<div class="hunger-pick">${[1, 2, 3, 4, 5].map((n) => `<button type="button" class="chip" data-hunger="${n}" data-msg="${esc(m.id)}"><b>${n}</b> ${HUNGER_LABELS[n]}</button>`).join('')}</div>`;
+}
+function bindHunger(el) {
+  el.querySelectorAll('[data-hunger]').forEach((b) => b.addEventListener('click', async () => {
+    const level = Number(b.dataset.hunger);
+    const m = state.messages.find((x) => x.id === b.dataset.msg);
+    if (!m || m.answered) return;
+    m.answered = level; // show it straight away; the saved copy follows
+    renderThread();
+    try { await api('nudge', { action: 'hunger', level, messageId: m.id, tz: TZ }); }
+    catch (err) { m.answered = null; renderThread(); toast(`Couldn't save that: ${err.message}`); }
+  }));
+  el.querySelector('[data-hunger-idea]')?.addEventListener('click', () => send("I'm hungry. What's something filling I could have?"));
 }
 
 // Per-item breakdown (with processing dots and assumptions), shared by chat cards and Today.
@@ -1433,11 +1464,28 @@ async function currentSubscription() {
   return reg.pushManager.getSubscription();
 }
 
+const PUSH_HEAD = '<h2>Notifications</h2><p class="disclaimer">Your coach can text you an idea before you usually eat, check how full you are a few hours after a meal, and send Monday notes.</p>';
+function nudgeLevelNow() {
+  const p = state.profile || {};
+  return ['off', 'light', 'more'].includes(p.nudge_level) ? p.nudge_level : (p.coach_style === 'quiet' ? 'off' : 'light');
+}
+function nudgeControlHtml() {
+  const cur = nudgeLevelNow();
+  const opt = (v, label) => `<option value="${v}"${cur === v ? ' selected' : ''}>${label}</option>`;
+  return `<div class="field" style="margin-top:12px"><label for="nudge-level">Meal ideas and hunger checks</label>
+    <select id="nudge-level">${opt('light', 'A little (about 2 a day)')}${opt('more', 'More (up to 5 a day)')}${opt('off', 'Off')}</select></div>`;
+}
+function bindNudgeControl() {
+  $('#nudge-level')?.addEventListener('change', async (e) => {
+    try { await api('nudge', { action: 'settings', nudge_level: e.target.value }); toast('Saved'); }
+    catch (err) { toast(`Couldn't save: ${err.message}`); }
+  });
+}
 async function refreshPushPanel(note = '') {
   const el = $('#push-panel');
   if (!el) return;
   if (NATIVE) return refreshNativePush(el, note);
-  const head = '<h2>Notifications</h2><p class="disclaimer">Monday and holiday notes from your coach, delivered like a text. Nothing else for now.</p>';
+  const head = PUSH_HEAD;
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -1451,11 +1499,12 @@ async function refreshPushPanel(note = '') {
   } else {
     const sub = Notification.permission === 'granted' ? await currentSubscription().catch(() => null) : null;
     body = sub
-      ? `<p class="saved-note" style="margin-top:8px">On for this device.</p>
+      ? `<p class="saved-note" style="margin-top:8px">On for this device.</p>${nudgeControlHtml()}
          <div class="btn-row" style="margin-top:8px"><button class="btn small" id="push-test">Send a test</button><button class="btn small" id="push-off">Turn off</button></div>`
       : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="push-on" style="width:auto">Turn on notifications</button></div>';
   }
   el.innerHTML = head + body + (note ? `<p class="sub" style="margin-top:8px">${esc(note)}</p>` : '');
+  bindNudgeControl();
   $('#push-on')?.addEventListener('click', enablePush);
   $('#push-test')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
@@ -1470,7 +1519,6 @@ async function refreshPushPanel(note = '') {
 }
 
 // ---------- push in the iPhone app (APNs through Firebase Cloud Messaging) ----------
-const PUSH_HEAD = '<h2>Notifications</h2><p class="disclaimer">Monday and holiday notes from your coach, delivered like a text. Nothing else for now.</p>';
 async function refreshNativePush(el, note) {
   const FM = plugin('FirebaseMessaging');
   let perm = 'prompt';
@@ -1479,10 +1527,11 @@ async function refreshNativePush(el, note) {
   const body = perm === 'denied'
     ? '<p class="muted" style="margin-top:8px">Notifications are off for HungerHush. Turn them on in Settings → Notifications → HungerHush, then come back here.</p>'
     : on
-      ? `<p class="saved-note" style="margin-top:8px">On for this phone.</p>
+      ? `<p class="saved-note" style="margin-top:8px">On for this phone.</p>${nudgeControlHtml()}
          <div class="btn-row" style="margin-top:8px"><button class="btn small" id="push-test">Send a test</button><button class="btn small" id="push-off">Turn off</button></div>`
       : '<div class="btn-row" style="margin-top:10px"><button class="btn small primary" id="push-on" style="width:auto">Turn on notifications</button></div>';
   el.innerHTML = PUSH_HEAD + body + (note ? `<p class="sub" style="margin-top:8px">${esc(note)}</p>` : '');
+  bindNudgeControl();
   $('#push-on')?.addEventListener('click', async (e) => {
     e.target.disabled = true;
     try {

@@ -963,3 +963,100 @@ test('AI consent: no coach call until the person agrees (and confirms 18+)', asy
   assert.equal((await handler(req('alexa', { text: 'eggs', tz: 'America/New_York' }))).status, 200);
   process.env.REQUIRE_AI_CONSENT = 'false';
 });
+
+test('nudges: usual meal times, weakest meal, and what is due when', async () => {
+  const { mealPlan, dueNudges, nudgeLevel } = await import('../netlify/functions/lib/nudges.mjs');
+  const tz = 'America/New_York';
+  const at = (d, hm) => new Date(`${d}T${hm}:00-05:00`);
+  const meals = [
+    ...['11-10', '11-11', '11-12', '11-13'].map((d, i) => ({ meal: 'lunch', at: at(`2026-${d}`, ['12:30', '12:40', '12:50', '13:00'][i]), protein_g: 12, fiber_g: 2 })),
+    ...['11-10', '11-11', '11-12'].map((d) => ({ meal: 'breakfast', at: at(`2026-${d}`, '07:00'), protein_g: 30, fiber_g: 8 })),
+    { meal: 'dinner', at: at('2026-11-12', '19:00'), protein_g: 40, fiber_g: 10 },
+  ];
+  const plan = mealPlan(meals, tz);
+  assert.equal(plan.times.lunch, 12 * 60 + 50); // median of 12:30, 12:40, 12:50, 13:00
+  assert.equal(plan.times.breakfast, 7 * 60);
+  assert.equal(plan.times.dinner, 18 * 60 + 30); // too few dinners: default
+  assert.equal(plan.weakSlot, 'lunch');
+
+  const clockAt = (iso) => makeClock(tz, new Date(iso));
+  const p = { nudgePlan: { day: '2026-11-17', ...plan } };
+  assert.deepEqual(dueNudges(p, clockAt('2026-11-17T12:20:00-05:00')), [{ kind: 'idea', slot: 'lunch' }]); // 30 min before 12:50
+  assert.deepEqual(dueNudges(p, clockAt('2026-11-17T12:45:00-05:00')), []); // too close
+  assert.deepEqual(dueNudges(p, clockAt('2026-11-17T06:30:00-05:00')), []); // light: breakfast isn't the weak meal
+  assert.deepEqual(dueNudges({ ...p, nudge_level: 'more' }, clockAt('2026-11-17T06:30:00-05:00')), [{ kind: 'idea', slot: 'breakfast' }]);
+  assert.deepEqual(dueNudges({ ...p, nudgeLog: { day: '2026-11-17', sent: ['lunch'] } }, clockAt('2026-11-17T12:20:00-05:00')), []);
+  assert.equal(nudgeLevel({ coach_style: 'quiet' }), 'off');
+  assert.equal(nudgeLevel({ coach_style: 'quiet', nudge_level: 'more' }), 'more');
+  assert.deepEqual(dueNudges({ ...p, nudge_level: 'off' }, clockAt('2026-11-17T12:20:00-05:00')), []);
+
+  // Hunger check: about 2.5–3.3 h after a real meal, once, not if they already said how hungry they are.
+  const lastMeal = { id: 'm9', at: new Date('2026-11-17T13:00:00-05:00'), slot: 'lunch', desc: 'turkey sandwich', calories: 450 };
+  const q = { nudgePlan: p.nudgePlan, lastMeal };
+  assert.deepEqual(dueNudges(q, clockAt('2026-11-17T15:45:00-05:00')), [{ kind: 'hunger', mealId: 'm9', desc: 'turkey sandwich' }]);
+  assert.deepEqual(dueNudges(q, clockAt('2026-11-17T14:30:00-05:00')), []); // too soon
+  assert.deepEqual(dueNudges({ ...q, lastCheckinAt: new Date('2026-11-17T15:00:00-05:00') }, clockAt('2026-11-17T15:45:00-05:00')), []);
+  assert.deepEqual(dueNudges({ ...q, nudgeLog: { day: '2026-11-17', sent: ['hunger:m1'] } }, clockAt('2026-11-17T15:45:00-05:00')), []); // light: one a day
+  assert.equal(dueNudges({ ...q, nudge_level: 'more', nudgeLog: { day: '2026-11-17', sent: ['hunger:m1'] } }, clockAt('2026-11-17T15:45:00-05:00')).length, 1);
+  assert.deepEqual(dueNudges({ ...q, lastMeal: { ...lastMeal, slot: 'snack', calories: 120 } }, clockAt('2026-11-17T15:45:00-05:00')), []); // a small snack
+  const late = { ...q, lastMeal: { ...lastMeal, at: new Date('2026-11-17T19:00:00-05:00') } };
+  assert.deepEqual(dueNudges(late, clockAt('2026-11-17T21:45:00-05:00')), []); // quiet after 9 pm
+});
+
+test('nudges: a lunch idea lands in the chat and on the phone once; a hunger check gets a one-tap answer', async () => {
+  const { runNudges } = await import('../netlify/functions/lib/nudges.mjs');
+  const { default: nudgeApi } = await import('../netlify/functions/nudge.mjs');
+  for (const k of [...store.keys()]) if (k.startsWith('users/')) store.delete(k);
+  const now = new Date('2026-11-17T12:20:00-05:00');
+  store.set('users/u1', { onboarded: true, name: 'Will', tz: 'America/New_York', push_enabled: true, lastActiveAt: new Date('2026-11-17T08:00:00-05:00'),
+    goals: ['feel_full'], allergies: ['peanuts'], staples: ['eggs', 'black beans', 'tortillas'] });
+  store.set('users/u1/push/a', { fcmToken: 'tok-u1' });
+  for (const [i, d] of ['10', '11', '12', '13'].entries()) store.set(`users/u1/meals/l${i}`, { day: `2026-11-${d}`, meal: 'lunch', description: 'turkey sandwich', at: new Date(`2026-11-${d}T12:50:00-05:00`), protein_g: 18, fiber_g: 2 });
+  store.set('users/u2', { onboarded: true, name: 'Alexa', tz: 'America/New_York', push_enabled: false, lastActiveAt: now }); // no notifications: nothing
+  queue.push({ stop_reason: 'end_turn', content: [{ type: 'text', text: '{"breakfast":"Breakfast idea: eggs.","lunch":"Lunch idea: black beans in the sandwich wrap for fiber that holds you.","dinner":"Dinner idea: x."}' }] });
+  fcmSent.length = 0;
+  const sent = await runNudges(fakeDb, now);
+  assert.deepEqual(sent, ['u1:lunch']);
+  const facts = calls.at(-1).messages[0].content;
+  assert.match(facts, /Allergies: peanuts/);
+  assert.match(facts, /On hand: eggs, black beans, tortillas/);
+  assert.match(facts, /lunch: usually ~18 g protein, ~2 g fiber/);
+  const msgs = [...store.entries()].filter(([k, v]) => k.startsWith('users/u1/messages/') && v.kind === 'nudge');
+  assert.equal(msgs.length, 1);
+  assert.match(msgs[0][1].text, /^Lunch idea: black beans/);
+  assert.equal(fcmSent.at(-1).notification.title, 'Lunch idea');
+  assert.match(fcmSent.at(-1).notification.body, /^black beans/);
+  assert.deepEqual(await runNudges(fakeDb, new Date('2026-11-17T12:30:00-05:00')), []); // not twice
+
+  // Lunch logged at 1 pm through the chat tools remembers it for the hunger check.
+  const { runTool } = await import('../netlify/functions/lib/tools.mjs');
+  const clock = makeClock('America/New_York', new Date('2026-11-17T13:00:00-05:00'));
+  const userRef = fakeDb.collection('users').doc('u1');
+  await runTool('log_meal', { description: 'bean wrap', meal: 'lunch', calories: 520, protein_g: 24, fiber_g: 11 }, { userRef, clock, FieldValue, sourceMessageId: 'x' });
+  assert.equal(store.get('users/u1').lastMeal.desc, 'bean wrap');
+  await runTool('log_meal', { description: 'old dinner', meal: 'dinner', date: '2026-11-15', calories: 700 }, { userRef, clock, FieldValue, sourceMessageId: 'x' });
+  assert.equal(store.get('users/u1').lastMeal.desc, 'bean wrap'); // back-filled logs don't count
+
+  const sent2 = await runNudges(fakeDb, new Date('2026-11-17T15:45:00-05:00'));
+  assert.equal(sent2.length, 1);
+  assert.match(sent2[0], /^u1:hunger:/);
+  const [checkKey, check] = [...store.entries()].find(([k, v]) => k.startsWith('users/u1/messages/') && v.kind === 'hungercheck');
+  assert.match(check.text, /since bean wrap/);
+  assert.equal(fcmSent.at(-1).notification.title, "How's your hunger?");
+
+  const answer = (body, token = 'good') => nudgeApi(new Request('http://x/nudge', { method: 'POST', headers: { authorization: 'Bearer ' + token }, body: JSON.stringify(body) }));
+  assert.equal((await answer({ action: 'hunger', level: 9, messageId: checkKey.split('/').at(-1) })).status, 400);
+  assert.equal((await answer({ action: 'hunger', level: 2, messageId: checkKey.split('/').at(-1) }, 'alexa')).status, 404); // someone else's message
+  const r = await answer({ action: 'hunger', level: 2, messageId: checkKey.split('/').at(-1), tz: 'America/New_York' });
+  assert.equal(r.status, 200);
+  assert.equal(store.get(checkKey).answered, 2);
+  const ci = [...store.entries()].find(([k, v]) => k.startsWith('users/u1/checkins/') && v.source === 'nudge')[1];
+  assert.equal(ci.level, 2);
+  assert.equal(ci.after_meal, store.get('users/u1').lastMeal.id);
+  assert.equal((await (await answer({ action: 'hunger', level: 3, messageId: checkKey.split('/').at(-1) })).json()).already, true);
+
+  assert.equal((await answer({ action: 'settings', nudge_level: 'loud' })).status, 400);
+  assert.equal((await answer({ action: 'settings', nudge_level: 'off' })).status, 200);
+  assert.equal(store.get('users/u1').nudge_level, 'off');
+  assert.deepEqual(await runNudges(fakeDb, new Date('2026-11-18T12:20:00-05:00')), []);
+});

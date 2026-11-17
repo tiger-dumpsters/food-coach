@@ -196,6 +196,7 @@ export const TOOLS = [
         workouts_per_week: { type: 'number' },
         preferred_days: { type: 'array', items: { type: 'string' } },
         reminder_level: { type: 'string', enum: ['quiet', 'normal', 'accountability'] },
+        nudge_level: { type: 'string', enum: ['off', 'light', 'more'], description: 'Proactive notifications (meal ideas before usual meal times, hunger checks after meals): off, light (default: one idea and one check a day), more.' },
         coach_style: { type: 'string', enum: ['quiet', 'balanced', 'hands_on'], description: 'How much coaching to add after logs: quiet = just log, balanced = a short tip when useful (default), hands_on = more look-ahead.' },
         onboarded: { type: 'boolean' },
       },
@@ -355,6 +356,14 @@ export async function runTool(name, input, ctx) {
     });
     const ref = await userRef.collection(col).add(data);
     const entry = { kind, id: ref.id, ...strip(data) };
+    // Remember the latest meal and check-in for the hunger checks (lib/nudges.mjs).
+    // Only things eaten just now count, not back-filled logs.
+    const fresh = day === clock.day && at instanceof Date && clock.now - at < 3 * 3600000 && clock.now - at > -900000;
+    if (fresh && name === 'log_meal') {
+      await userRef.set({ lastMeal: { id: ref.id, at, slot: data.meal || null, desc: String(data.description || '').slice(0, 60), calories: data.calories || 0 } }, { merge: true })
+        .catch((e) => console.error('lastMeal', e.message));
+    }
+    if (fresh && name === 'log_hunger') await userRef.set({ lastCheckinAt: at }, { merge: true }).catch(() => {});
     let note = '';
     if (name === 'log_meal' && Array.isArray(sharedWith) && sharedWith.length) {
       const res = await shareMeal({ ...ctx, data, sharedWith, portion });

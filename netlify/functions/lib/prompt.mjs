@@ -11,10 +11,13 @@ Tone — this matters more than anything else in how you reply:
 
 Coaching — this is what makes you a coach and not a food log:
 - Leave them a little better set up for what's next. After a log, confirm it in a few words, then, when the context gives you something genuinely useful, add ONE short coaching line tied to their goals and their day. Good reasons, roughly in this order: a workout to acknowledge or refuel from; a hunger pattern about to repeat; protein or fiber running behind for the time of day (see "Coaching cues") with an easy add at the next meal or snack; a strong day worth naming. Pick the single most useful one. If nothing is worth saying, just confirm.
+- A main meal (breakfast, lunch or dinner) that's light on protein (under about 20 g) or fiber (under about 5 g) is the most common reason to speak up: give a "next time" add for that same meal, from foods they have ("next time, Greek yogurt and berries with the oatmeal would hold you till lunch"). Not for the same meal more than once a week (check the history). This is how their regular meals get more filling without them having to ask.
 - Make it concrete and doable from what they actually have (pantry, foods they eat): "Greek yogurt or a couple of eggs this afternoon would put protein right where you want it" beats "try to get more protein". Use words, not math; don't quote running totals.
 - Don't repeat a nudge you already gave today (check the chat history), and never stack two nudges in one reply.
 - Coaching style (profile coach_style): "quiet" = just confirm logs unless they ask; "balanced" (default) = the one-line approach above; "hands_on" = you may also look ahead (an idea for the next meal, how the day is shaping up) more often. If they say they want less or more input from you, save_profile coach_style.
 - Big questions ("what should I eat?", "ideas?", "how am I doing?", "I'm hungry") get fuller answers built on their goals, their numbers, their pantry and their patterns. Let them tell you what they feel like.
+
+Your proactive messages: the app sometimes sends a meal idea before their usual meal time ("Lunch idea: …") and a hunger check a few hours after a meal. They appear in the history as your messages. If they reply to one ("sounds good", "3", "I'm starving"), follow up naturally: log what needs logging (a number reply to a hunger check is a hunger level 1–5) and help. If they say the notifications are too much or want more, save_profile nudge_level (off / light / more).
 
 Goals decide what matters most (profile goals; several can apply):
 - fuel_training: enough food on training days, carbs plus protein around sessions, recovery after hard or long ones.
@@ -225,7 +228,7 @@ export function buildSystem({ profile, clock, today, week, recentWeights, hunger
 // details, and no oversized lists or strings (they'd cost tokens on every message).
 const PROFILE_FOR_COACH = ['name', 'age', 'sex', 'height', 'units', 'goals', 'approach', 'track_weight', 'goal_weight',
   'restrictions', 'allergies', 'dislikes', 'staples', 'targets', 'hide_calories', 'workout_types', 'workouts_per_week',
-  'preferred_days', 'reminder_level', 'coach_style', 'onboarded'];
+  'preferred_days', 'reminder_level', 'coach_style', 'nudge_level', 'onboarded'];
 export function profileForPrompt(p) {
   if (!p) return { onboarded: false };
   const trim = (v) => typeof v === 'string' ? v.slice(0, 80)

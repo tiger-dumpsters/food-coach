@@ -379,3 +379,11 @@ button.link { border: 0; background: none; padding: 0; color: var(--accent); fon
 .iap-terms { margin-top: 10px; text-align: left; }
 .iap-terms a { color: var(--ink-2); }
 #iap-restore { margin-top: 8px; color: var(--ink-2); }
+
+/* Hunger check: one-tap answers under the coach's message */
+.hunger-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; max-width: 92%; }
+.hunger-pick .chip { border: 1px solid var(--line, rgba(255,255,255,.14)); background: var(--surface-2); color: inherit; border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 0.85rem; cursor: pointer; }
+.hunger-pick .chip b { margin-right: 2px; }
+.hunger-pick .chip:active { transform: scale(.97); }
+.hunger-pick.answered { align-items: center; color: var(--ink-3); font-size: 0.85rem; gap: 10px; }
+.toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: var(--surface-2); color: inherit; padding: 10px 16px; border-radius: 999px; font-size: 0.9rem; z-index: 50; box-shadow: 0 6px 20px rgba(0,0,0,.25); }
